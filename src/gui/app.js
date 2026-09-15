@@ -1,0 +1,843 @@
+/* EZ Scanner GUI — vanilla JS, no build step, no CDN. */
+
+const TOKEN = window.EZ?.token ?? '';
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => [...document.querySelectorAll(sel)];
+
+const state = {
+  config: null,
+  source: { kind: 'cloudflare', limit: 5000, seed: 1337, extended: false },
+  stats: null,
+  scannerState: 'idle',
+  network: { offline: false, message: '' },
+  results: new Map(),
+  logs: [],
+  sessions: [],
+  selected: new Set(),
+  sort: 'score',
+  healthyOnly: true,
+  text: '',
+  activeSession: null,
+  rendered: 0,
+};
+
+/* ───────────────────────────── i18n ───────────────────────────── */
+
+const EN = {
+  tagline: 'Find clean Cloudflare IPs with configurable gates',
+  'state.idle': 'idle',
+  'net.unknown': 'line: unknown',
+  'net.offline': 'The internet dropped — the scan paused and will continue automatically.',
+  'setup.title': '1. Scan setup',
+  'preset.fast': 'Fast',
+  'preset.standard': 'Balanced',
+  'preset.strict': 'Strict',
+  'preset.gentle': 'Gentle (Iran-friendly)',
+  'source.title': 'Address source',
+  'src.cf': 'Cloudflare',
+  'src.paste': 'Paste',
+  'src.file': 'File',
+  'src.domains': 'Domains',
+  'src.config': 'Config',
+  'src.count': 'Address count',
+  'src.seed': 'Seed (reproducible)',
+  'src.extended': 'Include non-official ranges (lower hit rate)',
+  'src.pasteHint': 'One per line: IP, range, CIDR, IP:port or domain. # comments.',
+  'src.fileHint': 'Text file with IPs/CIDRs, one per line.',
+  'src.parse': 'Parse config',
+  'src.apply': 'Use its SNI/port',
+  'src.scanDomain': 'Scan the config domain',
+  'src.preview': 'Preview count',
+  'probe.title': 'Probe',
+  'probe.mode': 'Mode',
+  'probe.port': 'Port',
+  'probe.sni': 'SNI',
+  'probe.tries': 'Tries',
+  'probe.min': 'Min successes',
+  'probe.timeout': 'Timeout (ms)',
+  'probe.workers': 'Workers',
+  'probe.latency': 'Max latency (ms)',
+  'probe.loss': 'Max loss (%)',
+  'probe.minScore': 'Min score',
+  'probe.requireHttp': 'Validate HTTP response',
+  'probe.requireWs': 'Validate WebSocket (off by default)',
+  'probe.earlyExit': 'Stop early on success',
+  'probe.httpPath': 'HTTP path',
+  'probe.wsPath': 'WS path',
+  'probe.stability': 'Idle hold (ms)',
+  'probe.family': 'Family',
+  'speed.title': 'Throughput',
+  'speed.down': 'Download test',
+  'speed.up': 'Upload test',
+  'speed.bytes': 'Download bytes',
+  'speed.top': 'Top N',
+  'speed.sni': 'Speed SNI',
+  'speed.bytesUp': 'Upload bytes',
+  'speed.url': 'Download URL',
+  'safe.title': 'Safety / anti-detection',
+  'safe.rate': 'Max connections/sec',
+  'safe.delay': 'Per-worker delay (ms)',
+  'safe.backoff': 'Adaptive slow-down on errors',
+  'safe.autopause': 'Auto-pause when the line dies',
+  'safe.hint': 'These keep the operator from killing the whole line (MCI, Shatel).',
+  'ctl.start': 'Start scan',
+  'ctl.pause': 'Pause',
+  'ctl.resume': 'Resume',
+  'ctl.stop': 'Stop',
+  'ctl.save': 'Save session',
+  'progress.title': '2. Progress',
+  'results.title': '3. Results',
+  'res.healthyOnly': 'Healthy only',
+  'res.search': 'search (ip/colo)',
+  'res.sortScore': 'score',
+  'res.sortLatency': 'latency',
+  'res.sortDown': 'download',
+  'res.sortLoss': 'loss',
+  'res.sortIp': 'ip',
+  'res.refresh': 'Reload',
+  'bulk.all': 'Select all',
+  'bulk.none': 'Clear selection',
+  'bulk.copyIp': 'Copy ip:port',
+  'bulk.copyJson': 'Copy JSON',
+  'bulk.retestSpeed': 'Re-test speed',
+  'bulk.retestProbe': 'Re-probe',
+  'bulk.rescan': 'Scan only these',
+  'th.ping': 'latency',
+  'th.loss': 'loss',
+  'th.down': 'down',
+  'th.up': 'up',
+  'th.score': 'score',
+  'th.status': 'status',
+  'export.title': '4. Export & combine with a config',
+  'export.template': 'Config link (for generated output)',
+  'export.prefix': 'Name prefix',
+  'export.hosts': 'IPs only',
+  'export.build': 'Build configs',
+  'export.copyLinks': 'Copy configs',
+  'export.downloadLinks': 'Download configs',
+  'tools.title': '5. Tools',
+  'tools.sessions': 'Saved sessions',
+  'tools.loadResume': 'Load & resume',
+  'tools.doctor': 'Line diagnostics',
+  'tools.runDoctor': 'Run diagnostics',
+  'tools.log': 'Live log',
+  'log.all': 'all',
+  'log.warn': 'warnings + errors',
+  'log.error': 'errors only',
+  'log.clear': 'Clear',
+  'tools.help': 'Quick help',
+  'help.1': 'No green result? Use the gentle preset and make sure WebSocket + idle hold are off.',
+  'help.2': 'The best SNI is the one from your own config — paste the link into the Config tab.',
+  'help.3': 'Real tunnel throughput differs: re-test the IPs inside your client.',
+  'help.4': 'Save the session to resume a long scan later.',
+  'foot.shutdown': 'Stop server',
+};
+
+const FA = new Map();
+let lang = 'fa';
+
+function initI18n() {
+  for (const el of $$('[data-i18n]')) {
+    FA.set(el.dataset.i18n, el.textContent.trim());
+  }
+  for (const el of $$('[data-i18n-ph]')) {
+    el.dataset.faPh = el.placeholder;
+  }
+}
+
+function setLang(next) {
+  lang = next;
+  document.documentElement.lang = next;
+  document.documentElement.dir = next === 'fa' ? 'rtl' : 'ltr';
+  for (const el of $$('[data-i18n]')) {
+    const key = el.dataset.i18n;
+    el.textContent = next === 'en' ? EN[key] ?? FA.get(key) ?? key : FA.get(key) ?? key;
+  }
+  for (const el of $$('[data-i18n-ph]')) {
+    el.placeholder = next === 'en' ? EN[el.dataset.i18nPh] ?? el.dataset.faPh : el.dataset.faPh;
+  }
+  $('#btn-lang').textContent = next === 'en' ? 'فا' : 'EN';
+}
+
+/* ───────────────────────────── api ───────────────────────────── */
+
+async function api(path, body = null, method = 'POST') {
+  const options = {
+    method,
+    headers: { 'Content-Type': 'application/json', 'x-ez-token': TOKEN },
+  };
+  if (body !== null) options.body = JSON.stringify(body);
+  const res = await fetch(path, options);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `${res.status} ${res.statusText}`);
+  return data;
+}
+
+function toast(message, ms = 2600) {
+  const el = $('#toast');
+  el.textContent = message;
+  el.classList.remove('hidden');
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => el.classList.add('hidden'), ms);
+}
+
+/* ─────────────────────────── form <-> config ─────────────────────────── */
+
+const FIELDS = [
+  ['cfg-mode', 'mode', 'str'],
+  ['cfg-port', 'port', 'num'],
+  ['cfg-sni', 'sni', 'str'],
+  ['cfg-tries', 'tries', 'num'],
+  ['cfg-min', 'minSuccesses', 'num'],
+  ['cfg-timeout', 'timeoutMs', 'num'],
+  ['cfg-workers', 'workers', 'num'],
+  ['cfg-latency', 'maxLatencyMs', 'num'],
+  ['cfg-loss', 'maxLossPct', 'num'],
+  ['cfg-score', 'minScore', 'num'],
+  ['cfg-requireHttp', 'requireHttp', 'bool'],
+  ['cfg-requireWs', 'requireWs', 'bool'],
+  ['cfg-earlyExit', 'earlyExit', 'bool'],
+  ['cfg-httpPath', 'httpPath', 'str'],
+  ['cfg-wsPath', 'wsPath', 'str'],
+  ['cfg-stability', 'stabilityMs', 'num'],
+  ['cfg-family', 'family', 'num'],
+  ['cfg-measureSpeed', 'measureSpeed', 'bool'],
+  ['cfg-measureUpload', 'measureUpload', 'bool'],
+  ['cfg-speedBytes', 'speedBytes', 'num'],
+  ['cfg-topN', 'topN', 'num'],
+  ['cfg-speedSni', 'speedSni', 'str'],
+  ['cfg-uploadBytes', 'uploadBytes', 'num'],
+  ['cfg-speedUrl', 'speedUrl', 'str'],
+  ['cfg-rate', 'rateLimitPerSec', 'num'],
+  ['cfg-delay', 'minDelayMs', 'num'],
+  ['cfg-backoff', 'adaptiveBackoff', 'bool'],
+  ['cfg-autopause', 'autoPauseOnNetworkLoss', 'bool'],
+];
+
+function configToForm(config) {
+  if (!config) return;
+  for (const [id, key, kind] of FIELDS) {
+    const el = $(`#${id}`);
+    if (!el) continue;
+    if (kind === 'bool') el.checked = Boolean(config[key]);
+    else el.value = config[key] ?? '';
+  }
+  $('#cfg-limit').value = state.source.limit ?? 5000;
+  $('#cfg-seed').value = state.source.seed ?? 1337;
+  $('#cfg-extended').checked = Boolean(state.source.extended);
+}
+
+function formToConfig() {
+  const config = {};
+  for (const [id, key, kind] of FIELDS) {
+    const el = $(`#${id}`);
+    if (!el) continue;
+    if (kind === 'bool') config[key] = el.checked;
+    else if (kind === 'num') config[key] = Number(el.value);
+    else config[key] = el.value;
+  }
+  return config;
+}
+
+function formToSource() {
+  const kind = $('.tab.active')?.dataset.kind ?? 'cloudflare';
+  const source = {
+    kind,
+    limit: Number($('#cfg-limit').value) || 0,
+    seed: Number($('#cfg-seed').value) || 1337,
+    extended: $('#cfg-extended').checked,
+  };
+  if (kind === 'paste') source.text = $('#cfg-paste').value;
+  if (kind === 'domains') source.text = $('#cfg-domains').value;
+  if (kind === 'file') source.text = $('#cfg-file').dataset.text ?? '';
+  if (kind === 'config') source.config = $('#cfg-link').value;
+  return source;
+}
+
+/* ───────────────────────────── results ───────────────────────────── */
+
+function resultKey(r) {
+  return `${r.ip}:${r.port}`;
+}
+
+function visibleResults() {
+  const list = [...state.results.values()];
+  const filtered = list.filter((r) => {
+    if (state.healthyOnly && !r.healthy) return false;
+    if (state.text && !(`${r.ip}:${r.port} ${r.colo} ${r.sni}`.toLowerCase().includes(state.text))) return false;
+    return true;
+  });
+  const sorters = {
+    score: (a, b) => b.score - a.score || a.medianLatency - b.medianLatency,
+    latency: (a, b) => (a.medianLatency || 1e9) - (b.medianLatency || 1e9),
+    down: (a, b) => (b.downMbps || 0) - (a.downMbps || 0),
+    loss: (a, b) => a.lossPct - b.lossPct,
+    ip: (a, b) => a.ip.localeCompare(b.ip, undefined, { numeric: true }),
+  };
+  return filtered.sort(sorters[state.sort] ?? sorters.score);
+}
+
+const MAX_ROWS = 500;
+
+function renderResults() {
+  const rows = visibleResults();
+  const body = $('#results-body');
+  const slice = rows.slice(0, MAX_ROWS);
+  const frag = document.createDocumentFragment();
+  for (const r of slice) {
+    const tr = document.createElement('tr');
+    tr.className = r.healthy ? '' : 'not-healthy';
+    const checked = state.selected.has(resultKey(r)) ? 'checked' : '';
+    tr.innerHTML = `
+      <td class="c"><input type="checkbox" data-key="${resultKey(r)}" ${checked} /></td>
+      <td class="ip">${r.ip}</td>
+      <td>${r.port}</td>
+      <td class="${r.medianLatency && r.medianLatency < 300 ? 'good' : r.medianLatency < 800 ? 'mid' : 'bad'}">${r.medianLatency ? `${r.medianLatency}ms` : '—'}</td>
+      <td class="${r.lossPct === 0 ? 'good' : r.lossPct <= 50 ? 'mid' : 'bad'}">${r.lossPct}%</td>
+      <td>${r.downMbps ? `${r.downMbps}M` : '—'}</td>
+      <td>${r.upMbps ? `${r.upMbps}M` : '—'}</td>
+      <td>${r.score}</td>
+      <td>${r.httpStatus || '—'}</td>
+      <td>${r.wsOk === null ? '—' : r.wsOk ? 'ok' : 'no'}</td>
+      <td>${r.stable === null ? '—' : r.stable ? 'ok' : 'no'}</td>
+      <td>${r.colo || '—'}</td>
+      <td class="${r.healthy ? 'good' : 'bad'}" title="${(r.reasons || []).join(' / ')}">${r.healthy ? '✓' : (r.reasons?.[0] ?? '—')}</td>`;
+    frag.appendChild(tr);
+  }
+  body.replaceChildren(frag);
+  state.rendered = slice.length;
+  $('#bulk-count').textContent = `${state.selected.size} / ${rows.length}`;
+  $('#results-note').textContent =
+    rows.length > MAX_ROWS ? `${rows.length} rows — showing the first ${MAX_ROWS}` : `${rows.length} rows`;
+  $('#foot-summary').textContent = `${state.results.size} reachable · ${[...state.results.values()].filter((r) => r.healthy).length} healthy`;
+}
+
+/* ───────────────────────────── rendering ───────────────────────────── */
+
+function fmtDuration(ms) {
+  if (!ms || ms < 0) return '—';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return `${m}m ${s % 60}s`;
+}
+
+function renderStats() {
+  const st = state.stats;
+  if (!st) return;
+  const pct = st.total ? Math.min(100, (st.done / st.total) * 100) : 0;
+  $('#bar-main').style.width = `${pct}%`;
+  $('#stat-line').textContent = `${st.phase} · ${st.done}/${st.total} (${pct.toFixed(1)}%) · ${st.ok} ok · ${st.failed} fail · ${st.healthy} healthy`;
+  const fails = Object.entries(st.failuresByKind ?? {})
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([kind, count]) => `${kind}:${count}`)
+    .join(' ');
+  $('#stat-line2').textContent =
+    `rate ${st.rate}/s · ETA ${fmtDuration(st.etaMs)} · elapsed ${fmtDuration(st.elapsedMs)} · inflight ${st.inflight} · backoff ×${(st.backoffFactor ?? 1).toFixed(2)}` +
+    (fails ? ` · fails ${fails}` : '') +
+    (st.message ? ` · ${st.message}` : '');
+  const badge = $('#badge-state');
+  badge.textContent = st.paused ? 'paused' : state.scannerState;
+  badge.className = `badge ${st.paused || state.scannerState === 'offline' ? 'warn' : state.scannerState === 'running' ? 'ok' : 'ghost'}`;
+  const net = $('#badge-network');
+  net.textContent = state.network.offline ? 'line: DOWN' : 'line: ok';
+  net.className = `badge ${state.network.offline ? 'bad' : 'ok'}`;
+  $('#offline-banner').classList.toggle('hidden', !state.network.offline);
+}
+
+function renderLogs() {
+  const filter = $('#log-filter').value;
+  const list = state.logs.filter((l) => (filter === 'all' ? true : filter === 'warn' ? l.level !== 'info' : l.level === 'error'));
+  const el = $('#log');
+  const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
+  el.innerHTML = list
+    .slice(-300)
+    .map((l) => {
+      const time = new Date(l.at).toLocaleTimeString();
+      return `<div class="${l.level}">[${time}] ${escapeHtml(l.text)}</div>`;
+    })
+    .join('');
+  if (atBottom) el.scrollTop = el.scrollHeight;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
+function renderSessions() {
+  const ul = $('#session-list');
+  ul.innerHTML = '';
+  if (!state.sessions.length) {
+    ul.innerHTML = '<li class="meta">—</li>';
+    return;
+  }
+  for (const s of state.sessions) {
+    const li = document.createElement('li');
+    li.className = state.activeSession === s.id ? 'active' : '';
+    li.innerHTML = `<input type="radio" name="session" value="${s.id}" ${state.activeSession === s.id ? 'checked' : ''} />
+      <div style="flex:1">
+        <div>${escapeHtml(s.label)}</div>
+        <div class="meta">${s.done}/${s.total} · ${s.healthy} healthy · ${new Date(s.updatedAt).toLocaleString()}</div>
+      </div>
+      <button data-act="download" data-id="${s.id}" title="download">⤓</button>
+      <button data-act="delete" data-id="${s.id}" title="delete">✕</button>`;
+    ul.appendChild(li);
+  }
+}
+
+/* ───────────────────────────── events ───────────────────────────── */
+
+function mergeResults(list) {
+  for (const r of list) state.results.set(resultKey(r), r);
+}
+
+function connectEvents() {
+  const es = new EventSource('/api/events');
+  es.addEventListener('hello', (e) => {
+    const data = JSON.parse(e.data);
+    state.stats = data.stats;
+    state.scannerState = data.state;
+    renderStats();
+  });
+  es.addEventListener('progress', (e) => {
+    state.stats = JSON.parse(e.data);
+    renderStats();
+  });
+  es.addEventListener('state', (e) => {
+    const data = JSON.parse(e.data);
+    state.scannerState = data.state;
+    state.stats = data.stats;
+    renderStats();
+  });
+  es.addEventListener('results', (e) => {
+    mergeResults(JSON.parse(e.data));
+    scheduleRender();
+  });
+  es.addEventListener('logs', (e) => {
+    state.logs.push(...JSON.parse(e.data));
+    if (state.logs.length > 1000) state.logs = state.logs.slice(-600);
+    renderLogs();
+  });
+  es.addEventListener('network', (e) => {
+    state.network = JSON.parse(e.data);
+    renderStats();
+  });
+  es.addEventListener('done', (e) => {
+    const data = JSON.parse(e.data);
+    toast(data.summary, 6000);
+    refreshState();
+  });
+  es.onerror = () => {
+    /* EventSource retries on its own */
+  };
+}
+
+let renderScheduled = false;
+function scheduleRender() {
+  if (renderScheduled) return;
+  renderScheduled = true;
+  setTimeout(() => {
+    renderScheduled = false;
+    renderResults();
+  }, 250);
+}
+
+async function refreshState() {
+  const data = await api('/api/state?limit=5000', null, 'GET');
+  state.config = data.config;
+  state.source = data.source;
+  state.stats = data.stats;
+  state.scannerState = data.state;
+  state.network = data.network ?? state.network;
+  state.results = new Map(data.results.map((r) => [resultKey(r), r]));
+  state.totals = data.totals ?? {};
+  state.logs = data.logs ?? [];
+  state.sessions = data.sessions ?? [];
+  configToForm(state.config);
+  renderStats();
+  renderLogs();
+  renderSessions();
+  renderResults();
+}
+
+/* ───────────────────────────── actions ───────────────────────────── */
+
+async function startScan(mode = 'fresh', extra = {}) {
+  try {
+    const payload = { mode, config: formToConfig(), source: formToSource(), ...extra };
+    if (mode === 'fresh') state.results.clear();
+    const res = await api('/api/scan/start', payload);
+    if (res.warnings?.length) {
+      $('#config-warnings').textContent = res.warnings.join(' | ');
+      toast(res.warnings[0], 7000);
+    } else {
+      $('#config-warnings').textContent = '';
+    }
+    if (mode === 'targets') state.results.clear();
+    state.selected.clear();
+    renderResults();
+    state.scannerState = res.state;
+    renderStats();
+  } catch (err) {
+    toast(err.message, 5000);
+  }
+}
+
+function selectedKeys() {
+  return [...state.selected];
+}
+
+async function copyText(text, note) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+  toast(note ?? `${text.length} chars copied`);
+}
+
+async function downloadExport(format) {
+  const body = {
+    format,
+    keys: selectedKeys(),
+    healthyOnly: state.healthyOnly,
+    template: $('#export-template').value,
+    labelPrefix: $('#export-prefix').value,
+    hidePort: false,
+  };
+  const res = await fetch('/api/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-ez-token': TOKEN },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    toast(err.error ?? 'export failed', 5000);
+    return;
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = res.headers.get('content-disposition')?.match(/filename="(.+)"/)?.[1] ?? `ez-scanner.${format}`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast(`${format} exported`);
+}
+
+async function inlineExport(format) {
+  const res = await api('/api/export/inline', {
+    format,
+    keys: selectedKeys(),
+    healthyOnly: state.healthyOnly,
+    template: $('#export-template').value,
+    labelPrefix: $('#export-prefix').value,
+  });
+  $('#export-note').textContent = `${res.count} rows → ${res.filename}`;
+  return res.binary ? atob(res.text) : res.text;
+}
+
+/* ───────────────────────────── wiring ───────────────────────────── */
+
+function wire() {
+  $('#btn-lang').addEventListener('click', () => setLang(lang === 'fa' ? 'en' : 'fa'));
+
+  for (const tab of $$('.tab')) {
+    tab.addEventListener('click', () => {
+      for (const t of $$('.tab')) t.classList.toggle('active', t === tab);
+      for (const block of $$('.src-block')) block.classList.add('hidden');
+      $(`#src-${tab.dataset.kind}`).classList.remove('hidden');
+    });
+  }
+
+  for (const btn of $$('.presets button')) {
+    btn.addEventListener('click', async () => {
+      try {
+        const res = await api('/api/preset', { name: btn.dataset.preset });
+        state.config = res.config;
+        configToForm(res.config);
+        for (const b of $$('.presets button')) b.classList.toggle('active', b === btn);
+        if (res.warnings?.length) {
+          $('#config-warnings').textContent = res.warnings.join(' | ');
+          toast(res.warnings[0], 7000);
+        }
+      } catch (err) {
+        toast(err.message);
+      }
+    });
+  }
+
+  $('#cfg-file').addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    $('#cfg-file').dataset.text = text;
+    $('#file-info').textContent = `${file.name} · ${text.split(/\r?\n/).filter(Boolean).length} lines`;
+  });
+
+  $('#btn-preview').addEventListener('click', async () => {
+    try {
+      const res = await api('/api/source/preview', { source: formToSource() });
+      $('#preview-out').textContent = `${res.count} addresses · ranges ${res.ranges} · domains ${res.resolved}${res.errors.length ? ` · ${res.errors.length} invalid` : ''}`;
+    } catch (err) {
+      $('#preview-out').textContent = err.message;
+    }
+  });
+
+  $('#btn-parse-config').addEventListener('click', async () => {
+    try {
+      const res = await api('/api/config/parse', { config: $('#cfg-link').value });
+      $('#config-parse-out').textContent = `${res.description}\n${res.warnings.join('\n')}`;
+    } catch (err) {
+      $('#config-parse-out').textContent = err.message;
+    }
+  });
+
+  $('#btn-apply-config').addEventListener('click', async () => {
+    try {
+      const res = await api('/api/config/parse', { config: $('#cfg-link').value });
+      $('#cfg-sni').value = res.parsed.sni ?? '';
+      $('#cfg-port').value = res.parsed.port ?? 443;
+      if (res.parsed.network === 'ws') $('#cfg-wsPath').value = res.parsed.path || '/';
+      $('#config-parse-out').textContent = `${res.description}\n${res.warnings.join('\n')}`;
+      toast('SNI / port applied');
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+
+  $('#btn-scan-config-domain').addEventListener('click', async () => {
+    try {
+      const res = await api('/api/config/parse', { config: $('#cfg-link').value });
+      $('#cfg-sni').value = res.parsed.sni ?? '';
+      $('#cfg-port').value = res.parsed.port ?? 443;
+      const cfg = formToConfig();
+      const src = { kind: 'domains', text: res.parsed.address, limit: 0, seed: 1 };
+      state.results.clear();
+      const started = await api('/api/scan/start', { mode: 'fresh', config: cfg, source: src, label: `config ${res.parsed.address}` });
+      state.scannerState = started.state;
+      toast(`scanning ${res.parsed.address}`);
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+
+  $('#btn-start').addEventListener('click', () => startScan('fresh'));
+  $('#btn-pause').addEventListener('click', async () => {
+    state.scannerState = (await api('/api/scan/pause')).state;
+    renderStats();
+  });
+  $('#btn-resume').addEventListener('click', async () => {
+    state.scannerState = (await api('/api/scan/resume')).state;
+    renderStats();
+  });
+  $('#btn-stop').addEventListener('click', async () => {
+    await api('/api/scan/stop');
+    toast('stopping…');
+  });
+  $('#btn-save').addEventListener('click', async () => {
+    const res = await api('/api/scan/save');
+    state.sessions = res.sessions;
+    renderSessions();
+    toast('session saved');
+  });
+
+  $('#filter-healthy').addEventListener('change', (e) => {
+    state.healthyOnly = e.target.checked;
+    renderResults();
+  });
+  $('#filter-text').addEventListener('input', (e) => {
+    state.text = e.target.value.trim().toLowerCase();
+    renderResults();
+  });
+  $('#filter-sort').addEventListener('change', (e) => {
+    state.sort = e.target.value;
+    renderResults();
+  });
+  $('#btn-refresh').addEventListener('click', () => refreshState().catch((err) => toast(err.message)));
+  for (const th of $$('th[data-sort]')) {
+    th.addEventListener('click', () => {
+      state.sort = th.dataset.sort;
+      $('#filter-sort').value = th.dataset.sort;
+      renderResults();
+    });
+  }
+
+  $('#results-body').addEventListener('change', (e) => {
+    const key = e.target.dataset?.key;
+    if (!key) return;
+    if (e.target.checked) state.selected.add(key);
+    else state.selected.delete(key);
+    $('#bulk-count').textContent = `${state.selected.size} / ${visibleResults().length}`;
+  });
+  $('#results-body').addEventListener('dblclick', async (e) => {
+    const tr = e.target.closest('tr');
+    const ip = tr?.children[1]?.textContent;
+    const port = tr?.children[2]?.textContent;
+    if (ip) await copyText(`${ip}:${port}`, `${ip}:${port} copied`);
+  });
+  $('#check-all').addEventListener('change', (e) => {
+    if (e.target.checked) for (const r of visibleResults().slice(0, MAX_ROWS)) state.selected.add(resultKey(r));
+    else state.selected.clear();
+    renderResults();
+  });
+  $('#btn-select-all').addEventListener('click', () => {
+    for (const r of visibleResults()) state.selected.add(resultKey(r));
+    renderResults();
+  });
+  $('#btn-select-none').addEventListener('click', () => {
+    state.selected.clear();
+    renderResults();
+  });
+
+  $('#btn-copy-ip').addEventListener('click', async () => {
+    const keys = selectedKeys();
+    const rows = keys.length ? keys : visibleResults().map(resultKey);
+    await copyText(rows.join('\n'), `${rows.length} lines copied`);
+  });
+  $('#btn-copy-json').addEventListener('click', async () => {
+    const keys = new Set(selectedKeys());
+    const rows = visibleResults().filter((r) => !keys.size || keys.has(resultKey(r)));
+    await copyText(JSON.stringify(rows, null, 2), `${rows.length} rows copied`);
+  });
+  $('#btn-retest-speed').addEventListener('click', async () => {
+    const res = await api('/api/retest', { keys: selectedKeys(), mode: 'speed' });
+    toast(`${res.updated} addresses re-tested`);
+  });
+  $('#btn-retest-probe').addEventListener('click', async () => {
+    const res = await api('/api/retest', { keys: selectedKeys(), mode: 'probe' });
+    toast(`${res.updated} addresses re-probed`);
+  });
+  $('#btn-rescan').addEventListener('click', async () => {
+    const keys = selectedKeys();
+    const list = keys.length ? keys : visibleResults().map(resultKey);
+    if (!list.length) {
+      toast('select some rows first');
+      return;
+    }
+    await startScan('targets', { targets: list, label: `rescan ${list.length}` });
+  });
+
+  for (const [id, format] of [
+    ['#btn-export-csv', 'csv'],
+    ['#btn-export-xlsx', 'xlsx'],
+    ['#btn-export-json', 'json'],
+    ['#btn-export-txt', 'txt'],
+    ['#btn-export-hosts', 'hosts'],
+  ]) {
+    $(id).addEventListener('click', () => downloadExport(format).catch((err) => toast(err.message)));
+  }
+  $('#btn-build-links').addEventListener('click', async () => {
+    try {
+      const text = await inlineExport('links');
+      $('#export-note').textContent = `${text.split('\n').filter(Boolean).length} configs built — see the copy/download buttons`;
+      await copyText(text, 'configs copied');
+    } catch (err) {
+      toast(err.message, 6000);
+    }
+  });
+  $('#btn-copy-links').addEventListener('click', async () => {
+    try {
+      await copyText(await inlineExport('links'), 'configs copied');
+    } catch (err) {
+      toast(err.message, 6000);
+    }
+  });
+  $('#btn-download-links').addEventListener('click', () => downloadExport('links').catch((err) => toast(err.message)));
+
+  $('#btn-load-session').addEventListener('click', async () => {
+    const id = state.activeSession;
+    if (!id) {
+      toast('select a session first');
+      return;
+    }
+    await startScan('resume', { resumeId: id });
+  });
+  $('#session-list').addEventListener('click', async (e) => {
+    const act = e.target.dataset?.act;
+    const id = e.target.dataset?.id;
+    if (!id) return;
+    if (act === 'delete') {
+      const res = await api('/api/sessions/delete', { id });
+      state.sessions = res.sessions;
+      renderSessions();
+      return;
+    }
+    if (act === 'download') {
+      const res = await fetch('/api/sessions/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-ez-token': TOKEN },
+        body: JSON.stringify({ id }),
+      });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `session-${id.slice(0, 8)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
+  });
+  $('#session-list').addEventListener('change', (e) => {
+    if (e.target.name === 'session') {
+      state.activeSession = e.target.value;
+      renderSessions();
+    }
+  });
+  $('#session-file').addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const res = await api('/api/sessions/import', { raw: text });
+      state.sessions = res.sessions;
+      renderSessions();
+      toast('session imported');
+    } catch (err) {
+      toast(err.message, 6000);
+    }
+  });
+
+  $('#btn-doctor').addEventListener('click', async () => {
+    $('#doctor-out').textContent = '…';
+    try {
+      const res = await api('/api/doctor');
+      $('#doctor-out').innerHTML = res.report.checks
+        .map((c) => `<div class="${c.ok ? 'ok' : 'error'}">${c.ok ? '✓' : '✗'} ${escapeHtml(c.name)} — ${escapeHtml(c.detail)}${c.hint ? `\n   → ${escapeHtml(c.hint)}` : ''}</div>`)
+        .join('');
+      toast(res.report.summary, 7000);
+    } catch (err) {
+      $('#doctor-out').textContent = err.message;
+    }
+  });
+
+  $('#log-filter').addEventListener('change', renderLogs);
+  $('#btn-clear-log').addEventListener('click', () => {
+    state.logs = [];
+    renderLogs();
+  });
+  $('#btn-shutdown').addEventListener('click', async () => {
+    await api('/api/shutdown');
+    document.body.innerHTML = '<p style="padding:40px;font-family:sans-serif">EZ Scanner server stopped. Close this tab.</p>';
+  });
+}
+
+async function main() {
+  initI18n();
+  wire();
+  try {
+    await refreshState();
+  } catch (err) {
+    toast(err.message, 6000);
+  }
+  connectEvents();
+}
+
+main();

@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EZ Scanner — اسکنر آی‌پی تمیز</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <script>
+      window.EZ = { token: '__EZ_TOKEN__', version: '__EZ_VERSION__', port: '__EZ_PORT__' };
+    </script>
+
+    <header class="top">
+      <div class="brand">
+        <span class="logo">EZ</span>
+        <div>
+          <h1>EZ Scanner</h1>
+          <p class="muted small" data-i18n="tagline">پیدا کردن آی‌پی‌های تمیز کلادفلر با گیت‌های قابل تنظیم</p>
+        </div>
+      </div>
+      <div class="top-status">
+        <span class="badge" id="badge-state" data-i18n="state.idle">آماده</span>
+        <span class="badge" id="badge-network" data-i18n="net.unknown">وضعیت خط: نامعلوم</span>
+        <span class="badge ghost" id="badge-version">v__EZ_VERSION__</span>
+        <button class="ghost-btn" id="btn-lang" title="English / فارسی">EN</button>
+      </div>
+    </header>
+
+    <div id="offline-banner" class="banner hidden" data-i18n="net.offline">
+      اینترنت قطع شده — اسکن موقتاً متوقف شد و به‌طور خودکار ادامه می‌یابد.
+    </div>
+
+    <div class="layout">
+      <!-- ───────────────── setup ───────────────── -->
+      <aside class="panel setup">
+        <h2 data-i18n="setup.title">۱. تنظیمات اسکن</h2>
+
+        <div class="presets">
+          <button data-preset="fast" data-i18n="preset.fast">سریع</button>
+          <button data-preset="standard" data-i18n="preset.standard">متعادل</button>
+          <button data-preset="strict" data-i18n="preset.strict">سخت‌گیر</button>
+          <button data-preset="gentle" data-i18n="preset.gentle">ملایم (اینترنت ایران)</button>
+        </div>
+
+        <fieldset>
+          <legend data-i18n="source.title">منبع آی‌پی</legend>
+          <div class="tabs" id="source-tabs">
+            <button class="tab active" data-kind="cloudflare" data-i18n="src.cf">کلادفلر</button>
+            <button class="tab" data-kind="paste" data-i18n="src.paste">پیست لیست</button>
+            <button class="tab" data-kind="file" data-i18n="src.file">فایل</button>
+            <button class="tab" data-kind="domains" data-i18n="src.domains">دامنه‌ها</button>
+            <button class="tab" data-kind="config" data-i18n="src.config">کانفیگ</button>
+          </div>
+
+          <div id="src-cloudflare" class="src-block">
+            <label class="row">
+              <span data-i18n="src.count">تعداد آی‌پی</span>
+              <input type="number" id="cfg-limit" min="0" max="2000000" step="100" value="5000" />
+            </label>
+            <label class="row">
+              <span data-i18n="src.seed">Seed (تکرارپذیری)</span>
+              <input type="number" id="cfg-seed" value="1337" />
+            </label>
+            <label class="check">
+              <input type="checkbox" id="cfg-extended" />
+              <span data-i18n="src.extended">رنج‌های غیررسمی اضافه هم اسکن شود (نرخ موفقیت کمتر)</span>
+            </label>
+          </div>
+
+          <div id="src-paste" class="src-block hidden">
+            <textarea id="cfg-paste" rows="7" placeholder="1.2.3.4&#10;104.16.0.0/24&#10;1.2.3.0-1.2.3.255&#10;example.com:8443"></textarea>
+            <p class="muted small" data-i18n="src.pasteHint">هر خط: آی‌پی، رنج، CIDR، آی‌پی:پورت یا دامنه. خطوط # کامنت هستند.</p>
+          </div>
+
+          <div id="src-file" class="src-block hidden">
+            <input type="file" id="cfg-file" accept=".txt,.csv,.list,text/plain" />
+            <p class="muted small" id="file-info" data-i18n="src.fileHint">فایل متنی با آی‌پی/CIDR در هر خط (حداکثر ~۳۲ مگابایت).</p>
+          </div>
+
+          <div id="src-domains" class="src-block hidden">
+            <textarea id="cfg-domains" rows="5" placeholder="speed.cloudflare.com&#10;my-domain.example"></textarea>
+          </div>
+
+          <div id="src-config" class="src-block hidden">
+            <textarea id="cfg-link" rows="3" placeholder="vless://… یا trojan://… یا vmess://…"></textarea>
+            <div class="row gap">
+              <button id="btn-parse-config" data-i18n="src.parse">تحلیل کانفیگ</button>
+              <button id="btn-apply-config" class="ghost-btn" data-i18n="src.apply">استفاده از SNI/پورت آن</button>
+              <button id="btn-scan-config-domain" class="ghost-btn" data-i18n="src.scanDomain">اسکن دامنه‌ی کانفیگ</button>
+            </div>
+            <pre id="config-parse-out" class="out small"></pre>
+          </div>
+
+          <div class="row gap">
+            <button id="btn-preview" class="ghost-btn" data-i18n="src.preview">پیش‌نمایش تعداد</button>
+            <span class="muted small" id="preview-out"></span>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend data-i18n="probe.title">پروب</legend>
+          <div class="grid2">
+            <label class="row"><span data-i18n="probe.mode">حالت</span>
+              <select id="cfg-mode">
+                <option value="tls">tls (دست‌دادن TLS)</option>
+                <option value="http">http (پاسخ HTTP)</option>
+                <option value="tcp">tcp (فقط اتصال)</option>
+              </select>
+            </label>
+            <label class="row"><span data-i18n="probe.port">پورت</span><input type="number" id="cfg-port" min="1" max="65535" value="443" /></label>
+            <label class="row"><span data-i18n="probe.sni">SNI</span><input type="text" id="cfg-sni" placeholder="www.cloudflare.com" /></label>
+            <label class="row"><span data-i18n="probe.tries">تعداد تلاش</span><input type="number" id="cfg-tries" min="1" max="10" value="3" /></label>
+            <label class="row"><span data-i18n="probe.min">حداقل موفقیت</span><input type="number" id="cfg-min" min="1" max="10" value="2" /></label>
+            <label class="row"><span data-i18n="probe.timeout">تایم‌اوت (ms)</span><input type="number" id="cfg-timeout" min="500" max="30000" step="500" value="4000" /></label>
+            <label class="row"><span data-i18n="probe.workers">ورکر</span><input type="number" id="cfg-workers" min="1" max="1000" value="50" /></label>
+            <label class="row"><span data-i18n="probe.latency">حداکثر پینگ (ms)</span><input type="number" id="cfg-latency" min="50" max="20000" step="50" value="1800" /></label>
+            <label class="row"><span data-i18n="probe.loss">حداکثر افت (%)</span><input type="number" id="cfg-loss" min="0" max="100" value="50" /></label>
+            <label class="row"><span data-i18n="probe.minScore">حداقل امتیاز</span><input type="number" id="cfg-score" min="0" max="100" value="45" /></label>
+          </div>
+          <div class="row gap wrap">
+            <label class="check"><input type="checkbox" id="cfg-requireHttp" checked /><span data-i18n="probe.requireHttp">بررسی پاسخ HTTP</span></label>
+            <label class="check"><input type="checkbox" id="cfg-requireWs" /><span data-i18n="probe.requireWs">بررسی WebSocket (پیش‌فرض خاموش)</span></label>
+            <label class="check"><input type="checkbox" id="cfg-earlyExit" checked /><span data-i18n="probe.earlyExit">توقف زودتر پس از موفقیت</span></label>
+          </div>
+          <div class="grid2">
+            <label class="row"><span data-i18n="probe.httpPath">مسیر HTTP</span><input type="text" id="cfg-httpPath" value="/" /></label>
+            <label class="row"><span data-i18n="probe.wsPath">مسیر WS</span><input type="text" id="cfg-wsPath" value="/" /></label>
+            <label class="row"><span data-i18n="probe.stability">نگه‌داشتن بیکار (ms)</span><input type="number" id="cfg-stability" min="0" max="30000" step="100" value="0" /></label>
+            <label class="row"><span data-i18n="probe.family">خانواده</span>
+              <select id="cfg-family"><option value="4">IPv4</option><option value="6">IPv6</option><option value="0">هردو</option></select>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend data-i18n="speed.title">تست سرعت</legend>
+          <div class="row gap wrap">
+            <label class="check"><input type="checkbox" id="cfg-measureSpeed" /><span data-i18n="speed.down">تست دانلود</span></label>
+            <label class="check"><input type="checkbox" id="cfg-measureUpload" /><span data-i18n="speed.up">تست آپلود</span></label>
+          </div>
+          <div class="grid2">
+            <label class="row"><span data-i18n="speed.bytes">حجم دانلود (بایت)</span><input type="number" id="cfg-speedBytes" min="100000" step="1000000" value="8000000" /></label>
+            <label class="row"><span data-i18n="speed.top">تعداد برتر</span><input type="number" id="cfg-topN" min="0" max="2000" value="20" /></label>
+            <label class="row"><span data-i18n="speed.sni">SNI سرعت</span><input type="text" id="cfg-speedSni" placeholder="(خودکار از آدرس)" /></label>
+            <label class="row"><span data-i18n="speed.bytesUp">حجم آپلود</span><input type="number" id="cfg-uploadBytes" min="65536" step="500000" value="2000000" /></label>
+          </div>
+          <label class="row"><span data-i18n="speed.url">آدرس دانلود</span><input type="text" id="cfg-speedUrl" value="https://speed.cloudflare.com/__down?bytes=%BYTES%" /></label>
+        </fieldset>
+
+        <fieldset>
+          <legend data-i18n="safe.title">ایمنی و ضد‌شناسایی</legend>
+          <div class="grid2">
+            <label class="row"><span data-i18n="safe.rate">سقف اتصال/ثانیه</span><input type="number" id="cfg-rate" min="0" max="5000" value="0" /></label>
+            <label class="row"><span data-i18n="safe.delay">تأخیر هر ورکر (ms)</span><input type="number" id="cfg-delay" min="0" max="10000" step="10" value="0" /></label>
+          </div>
+          <div class="row gap wrap">
+            <label class="check"><input type="checkbox" id="cfg-backoff" checked /><span data-i18n="safe.backoff">کاهش سرعت خودکار در خطای زیاد</span></label>
+            <label class="check"><input type="checkbox" id="cfg-autopause" checked /><span data-i18n="safe.autopause">توقف خودکار وقتی اینترنت قطع شود</span></label>
+          </div>
+          <p class="muted small" data-i18n="safe.hint">این گزینه‌ها جلوی قطع‌شدن اینترنت توسط اپراتور را می‌گیرند (مخابرات/شاتل).</p>
+        </fieldset>
+
+        <div class="controls">
+          <button id="btn-start" class="primary" data-i18n="ctl.start">شروع اسکن</button>
+          <button id="btn-pause" data-i18n="ctl.pause">توقف موقت</button>
+          <button id="btn-resume" data-i18n="ctl.resume">ادامه</button>
+          <button id="btn-stop" class="danger" data-i18n="ctl.stop">توقف</button>
+          <button id="btn-save" class="ghost-btn" data-i18n="ctl.save">ذخیره نشست</button>
+        </div>
+        <p class="muted small" id="config-warnings"></p>
+      </aside>
+
+      <!-- ───────────────── progress + results ───────────────── -->
+      <main class="panel main">
+        <h2 data-i18n="progress.title">۲. پیشرفت</h2>
+        <div class="progress">
+          <div class="bar"><div class="fill" id="bar-main"></div></div>
+          <div class="stats" id="stat-line">—</div>
+          <div class="stats small muted" id="stat-line2"></div>
+        </div>
+
+        <div class="results-head">
+          <h2 data-i18n="results.title">۳. نتیجه‌ها</h2>
+          <div class="filters">
+            <label class="check"><input type="checkbox" id="filter-healthy" checked /><span data-i18n="res.healthyOnly">فقط سالم‌ها</span></label>
+            <input type="search" id="filter-text" placeholder="جست‌وجو (آی‌پی/colo)" data-i18n-ph="res.search" />
+            <select id="filter-sort">
+              <option value="score" data-i18n="res.sortScore">امتیاز</option>
+              <option value="latency" data-i18n="res.sortLatency">پینگ</option>
+              <option value="down" data-i18n="res.sortDown">سرعت دانلود</option>
+              <option value="loss" data-i18n="res.sortLoss">افت</option>
+              <option value="ip" data-i18n="res.sortIp">آی‌پی</option>
+            </select>
+            <button id="btn-refresh" class="ghost-btn" data-i18n="res.refresh">بازخوانی</button>
+          </div>
+        </div>
+
+        <div class="bulk">
+          <button id="btn-select-all" class="ghost-btn" data-i18n="bulk.all">انتخاب همه</button>
+          <button id="btn-select-none" class="ghost-btn" data-i18n="bulk.none">حذف انتخاب</button>
+          <span class="muted small" id="bulk-count"></span>
+          <span class="spacer"></span>
+          <button id="btn-copy-ip" data-i18n="bulk.copyIp">کپی ip:port</button>
+          <button id="btn-copy-json" data-i18n="bulk.copyJson">کپی JSON</button>
+          <button id="btn-retest-speed" data-i18n="bulk.retestSpeed">تست سرعت مجدد</button>
+          <button id="btn-retest-probe" data-i18n="bulk.retestProbe">پروب مجدد</button>
+          <button id="btn-rescan" class="accent" data-i18n="bulk.rescan">اسکن فقط همین‌ها</button>
+        </div>
+
+        <div class="table-wrap">
+          <table id="results-table">
+            <thead>
+              <tr>
+                <th class="c"><input type="checkbox" id="check-all" /></th>
+                <th data-sort="ip">IP</th>
+                <th>Port</th>
+                <th data-sort="latency" data-i18n="th.ping">پینگ</th>
+                <th data-sort="loss" data-i18n="th.loss">افت</th>
+                <th data-sort="down" data-i18n="th.down">دانلود</th>
+                <th data-sort="up" data-i18n="th.up">آپلود</th>
+                <th data-sort="score" data-i18n="th.score">امتیاز</th>
+                <th>HTTP</th>
+                <th>WS</th>
+                <th>Idle</th>
+                <th>Colo</th>
+                <th data-i18n="th.status">وضعیت</th>
+              </tr>
+            </thead>
+            <tbody id="results-body"></tbody>
+          </table>
+        </div>
+        <p class="muted small" id="results-note"></p>
+
+        <h2 data-i18n="export.title">۴. خروجی و ترکیب با کانفیگ</h2>
+        <div class="exports">
+          <label class="row"><span data-i18n="export.template">لینک کانفیگ (برای ساخت خروجی)</span>
+            <input type="text" id="export-template" placeholder="vless://uuid@host:443?type=ws&security=tls&sni=…" />
+          </label>
+          <label class="row"><span data-i18n="export.prefix">پیشوند نام</span><input type="text" id="export-prefix" value="EZ" /></label>
+          <div class="row gap wrap">
+            <button id="btn-export-csv">CSV</button>
+            <button id="btn-export-xlsx">XLSX</button>
+            <button id="btn-export-json">JSON</button>
+            <button id="btn-export-txt">TXT (ip:port)</button>
+            <button id="btn-export-hosts" data-i18n="export.hosts">فقط آی‌پی‌ها</button>
+            <button id="btn-build-links" class="accent" data-i18n="export.build">ساخت کانفیگ‌ها</button>
+            <button id="btn-copy-links" class="ghost-btn" data-i18n="export.copyLinks">کپی کانفیگ‌ها</button>
+            <button id="btn-download-links" class="ghost-btn" data-i18n="export.downloadLinks">دانلود کانفیگ‌ها</button>
+          </div>
+          <p class="muted small" id="export-note"></p>
+        </div>
+      </main>
+
+      <!-- ───────────────── tools ───────────────── -->
+      <aside class="panel tools">
+        <h2 data-i18n="tools.title">۵. ابزارها</h2>
+
+        <section>
+          <h3 data-i18n="tools.sessions">نشست‌های ذخیره‌شده</h3>
+          <ul id="session-list" class="session-list"></ul>
+          <div class="row gap wrap">
+            <button id="btn-load-session" class="ghost-btn" data-i18n="tools.loadResume">انتخاب و ادامه</button>
+            <input type="file" id="session-file" accept=".json" />
+          </div>
+        </section>
+
+        <section>
+          <h3 data-i18n="tools.doctor">عیب‌یابی خط</h3>
+          <button id="btn-doctor" class="ghost-btn" data-i18n="tools.runDoctor">اجرای تست خط</button>
+          <div id="doctor-out" class="out small"></div>
+        </section>
+
+        <section>
+          <h3 data-i18n="tools.log">گزارش زنده</h3>
+          <div class="row gap">
+            <select id="log-filter">
+              <option value="all" data-i18n="log.all">همه</option>
+              <option value="warn" data-i18n="log.warn">هشدار و خطا</option>
+              <option value="error" data-i18n="log.error">فقط خطا</option>
+            </select>
+            <button id="btn-clear-log" class="ghost-btn" data-i18n="log.clear">پاک کردن</button>
+          </div>
+          <div id="log" class="log"></div>
+        </section>
+
+        <section>
+          <h3 data-i18n="tools.help">راهنمای سریع</h3>
+          <ul class="help small">
+            <li data-i18n="help.1">اگر هیچ آی‌پی سبزی نداشتی: پریست «ملایم» را بزن و مطمئن شو WebSocket و Idle خاموش است.</li>
+            <li data-i18n="help.2">بهترین SNI همان SNI کانفیگ خودت است؛ لینک را در تب «کانفیگ» پیست کن.</li>
+            <li data-i18n="help.3">برای دیدن سرعت واقعی کانفیگ، آی‌پی‌ها را در کلاینت خودت تست کن؛ اینجا مسیر مستقیم اندازه‌گیری می‌شود.</li>
+            <li data-i18n="help.4">اسکن طولانی را با «ذخیره نشست» ذخیره کن و بعداً «ادامه» بده.</li>
+          </ul>
+        </section>
+      </aside>
+    </div>
+
+    <footer class="foot">
+      <span id="foot-summary" class="muted small"></span>
+      <span class="spacer"></span>
+      <button id="btn-shutdown" class="ghost-btn small" data-i18n="foot.shutdown">بستن سرور</button>
+    </footer>
+
+    <div id="toast" class="toast hidden"></div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

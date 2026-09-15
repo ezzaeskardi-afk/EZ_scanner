@@ -1,0 +1,12 @@
+# Extra candidate prefixes — used only with --extended / the GUI "extended pool" switch.
+# Measured hit-rate is clearly lower than the official ranges, so keep this list
+# short and honest instead of dumping thousands of ASN /24s into the pool.
+# One CIDR per line, # starts a comment.
+
+# Cloudflare WARP / Gateway endpoints
+162.159.192.0/24
+162.159.193.0/24
+162.159.195.0/24
+
+# Additional Cloudflare-announced space (not part of ips-v4)
+172.64.0.0/13

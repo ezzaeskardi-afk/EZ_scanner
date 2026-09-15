@@ -1,0 +1,50 @@
+{
+  "name": "ez-scanner",
+  "version": "1.0.0",
+  "description": "EZ Scanner — clean-IP discovery engine for Cloudflare/SNI tunnels with a powerful local GUI (FA/EN) and a scriptable CLI",
+  "type": "module",
+  "license": "MIT",
+  "author": "ezzaeskardi-afk",
+  "homepage": "https://github.com/ezzaeskardi-afk/EZ_scanner",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ezzaeskardi-afk/EZ_scanner.git"
+  },
+  "keywords": [
+    "cloudflare",
+    "clean-ip",
+    "scanner",
+    "v2ray",
+    "xray",
+    "vless",
+    "trojan",
+    "dpi",
+    "censorship"
+  ],
+  "bin": {
+    "ezscan": "./src/cli/main.ts",
+    "ez-scanner": "./src/cli/main.ts"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node src/cli/main.ts gui",
+    "gui": "node src/cli/main.ts gui",
+    "scan": "node src/cli/main.ts scan",
+    "doctor": "node src/cli/main.ts doctor",
+    "selftest": "node src/cli/main.ts selftest",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --test-concurrency=1 \"test/**/*.test.ts\"",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "^5.9.2"
+  }
+}
