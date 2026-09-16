@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.1.0 — 2026-09-16
+
+### GUI — OpenUI dashboard
+- New **OpenUI dashboard** panel: the scan is turned into an [OpenUI
+  Lang](https://github.com/thesysdev/openui) document (`src/core/openui.ts`) and rendered
+  with OpenUI's official renderer + component library, so a result set becomes KPI cards,
+  a latency histogram, a cleanest-addresses table, the active gates and a failure
+  breakdown instead of a bare table.
+- `GET /api/report/openui?lang=fa|en&top=25[&download=1]` serves that document;
+  `src/gui/report.html` renders it in an iframe (style-isolated) with refresh, new-tab,
+  copy and download buttons.
+- The renderer (`@openuidev/browser-bundle@0.1.4`, MIT) is **vendored** in
+  `src/gui/vendor/openui/`, so nothing is fetched from a CDN — the GUI still works on
+  lines where jsDelivr/unpkg are blocked.
+- Report text is available in Persian or English and follows the GUI language.
+
+### GUI — look and feel
+- The whole UI was re-skinned on **OpenUI's design tokens** (oklch palette, spacing scale,
+  radii, type ramp, shadows) with a light and a dark theme, a manual theme switch that is
+  remembered, logical (RTL-safe) properties, focus rings and reduced-motion support.
+
+### Tests
+- `test/openui.test.ts` validates the generated OpenUI Lang: one statement per line, no
+  undefined or duplicated identifiers, balanced brackets, only components from the
+  official chat library, equal-length table columns, numeric-only chart series, string
+  escaping and determinism. 68 → 78 tests.
+
 ## 1.0.0 — 2026-09-16
 
 First release: a complete re-implementation of the clean-IP discovery workflow,

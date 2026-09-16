@@ -3,7 +3,7 @@
 **پیدا کردن آی‌پی‌های تمیز کلادفلر برای تانل‌های SNI — با یک رابط گرافیکی قدرتمند و یک CLI کامل.**
 Clean-IP discovery for Cloudflare fronted tunnels (vless / vmess / trojan / BPB style), with a local GUI, a scriptable CLI, resumable scans and honest diagnostics.
 
-[![tests](https://img.shields.io/badge/tests-68%20passing-brightgreen)](#تست‌ها--tests)
+[![tests](https://img.shields.io/badge/tests-78%20passing-brightgreen)](#تست‌ها--tests)
 [![node](https://img.shields.io/badge/node-%E2%89%A522.18-blue)](#نصب--install)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
@@ -68,6 +68,7 @@ ezscan gui
 1. **تنظیمات اسکن** — پریست‌ها، منبع آی‌پی، تمام پارامترهای پروب، تست سرعت و ایمنی.
 2. **پیشرفت** — فاز جاری، درصد، نرخ، ETA، تعداد سالم/ناموفق و **تفکیک علت خطاها** (`timeout: 18, reset: 3, …`).
 3. **نتیجه‌ها** — جدول زنده با مرتب‌سازی، فیلتر، انتخاب گروهی، کپی سریع، پروب/تست سرعت مجدد و «اسکن فقط همین‌ها».
+3.۵. **داشبورد OpenUI** — گزارش تصویری (KPI، نمودار پینگ، جدول تمیزترین آدرس‌ها، تفکیک خطاها) که از کد **OpenUI Lang** ساخته و با رندرر رسمی پروژه‌ی [OpenUI](https://github.com/thesysdev/openui) کشیده می‌شود؛ فایل‌هایش محلی‌اند (بدون CDN).
 4. **خروجی** — CSV / XLSX / JSON / TXT / فقط آی‌پی‌ها + ساخت کانفیگ آماده از روی لینک شما.
 5. **ابزارها** — نشست‌های ذخیره‌شده (ادامه/دانلود/حذف/ورود از فایل)، عیب‌یابی خط، لاگ زنده و راهنمای سریع.
 
@@ -169,14 +170,34 @@ ezscan scan --help                             # همه‌ی گزینه‌ها
 
 ```
 src/
-  core/      موتور بدون وابستگی: probe، scoring، ipsrc، ratelimit، scanner، export، zip/xlsx
+  core/      موتور بدون وابستگی: probe، scoring، ipsrc، ratelimit، scanner، export، zip/xlsx، openui
   server/    HTTP + SSE محلی برای GUI  +  doctor/selftest
-  gui/       رابط کاربری بدون build (HTML/CSS/JS خالص، راست‌به‌چپ، EN/FA)
+  gui/       رابط کاربری بدون build (HTML/CSS/JS خالص، راست‌به‌چپ، EN/FA) + vendor/openui
   cli/       خط فرمان
-test/        68 تست: پروب روی سرور TLS محلی، توقف/ادامه، snapshot، API و امنیت، خروجی‌ها
+test/        78 تست: پروب روی سرور TLS محلی، توقف/ادامه، snapshot، API و امنیت، خروجی‌ها، گزارش OpenUI
 ```
 
-فلسفه‌ی طراحی: **هیچ وابستگی رانتیای وجود ندارد** (فقط devDependencies برای تایپ‌چک)، TypeScript با type-stripping خودِ Node اجرا می‌شود، و منطق تصمیم‌گیری (scoring) به‌صورت توابع خالص و تست‌شده است.
+فلسفه‌ی طراحی: **هیچ وابستگی رانتیای وجود ندارد** (فقط devDependencies برای تایپ‌چک)، TypeScript با type-stripping خودِ Node اجرا می‌شود، و منطق تصمیم‌گیری (scoring) به‌صورت توابع خالص و تست‌شده است. تنها «کتابخانه»ی همراه، فایل‌های از پیش ساخته‌شده‌ی OpenUI است که برای کارکرد آفلاین داخل `src/gui/vendor/openui` قرار گرفته‌اند.
+
+---
+
+## داشبورد OpenUI
+
+بخش «داشبورد OpenUI» در GUI از [OpenUI](https://github.com/thesysdev/openui) استفاده می‌کند — زبان UI و رندرر آن — تا نتیجه‌ی اسکن به‌جای یک جدول خشک، یک گزارش تصویری باشد:
+
+- `src/core/openui.ts` از وضعیت اسکن (KPI‌ها، هیستوگرام پینگ، آدرس‌های تمیز، علت خطاها، گیت‌های فعال) یک سند **OpenUI Lang** می‌سازد:
+
+```
+root = Card([header, verdict, kpis, gates, chartHeader, chart, topHeader, topTable, failsTable])
+verdict = Callout("success", "Scan produced clean addresses", "5 address(es) passed every gate. …")
+kpis = SnippetCardBlock([kpi1, kpi2, kpi3, kpi4, kpi5], "grid", true)
+chart = BarChart(chartLabels, [chartSeries], "grouped", "latency bucket", "Addresses")
+```
+
+- صفحه‌ی `src/gui/report.html` همان سند را با `Renderer` و `openuiChatLibrary` رسمی رندر می‌کند (به‌صورت iframe، تا استایل‌های OpenUI با رابط اصلی قاطی نشود).
+- دکمه‌ها: **بازخوانی**، **تب جدید**، **کپی کد Lang**، **دانلود کد Lang** — با `GET /api/report/openui?lang=fa|en&top=25&download=1`.
+- رندرر داخل `src/gui/vendor/openui/` نگه‌داری می‌شود، پس **هیچ CDN‌ای لازم نیست** (روی خطوطی که jsDelivr/unpkg فیلتر است هم کار می‌کند).
+- کد Lang با JSON هم قابل استفاده است: می‌توانید همان گزارش را در OpenUI Playground یا هر اپ OpenUI دیگری پیست کنید.
 
 ---
 
@@ -184,11 +205,16 @@ test/        68 تست: پروب روی سرور TLS محلی، توقف/ادا�
 
 ```bash
 npm run typecheck
-npm test          # 68 tests: probe engine, gating, pause/resume, snapshot, exports, HTTP API
+npm test          # 78 tests: probe engine, gating, pause/resume, snapshot, exports, HTTP API, OpenUI report
 ```
 
-تست‌ها یک «لبه‌ی جعلی» محلی (TLS + WebSocket + سرور کند/قاتل) بالا می‌آورند و موتور را بدون نیاز به اینترنت واقعی می‌سنجند؛ یک اسکن واقعی هم روی آی‌پی‌های کلادفلر در `npm run selftest` قابل اجراست.
+تست‌ها یک «لبه‌ی جعلی» محلی (TLS + WebSocket + سرور کند/قاتل) بالا می‌آورند و موتور را بدون نیاز به اینترنت واقعی می‌سنجند؛ یک اسکن واقعی هم روی آی‌پی‌های کلادفلر در `npm run selftest` قابل اجراست. تست‌های `test/openui.test.ts` خودشان گرامر OpenUI Lang را اعتبارسنجی می‌کنند (هر خط `id = expr`، هیچ شناسه‌ای تعریف‌نشده نماند، طول ستون‌های جدول برابر باشد، فقط کامپوننت‌های کتابخانه‌ی رسمی استفاده شوند).
+
+## اعتبار و وابستگی‌های همراه / Credits
+
+- **OpenUI** (زبان OpenUI Lang، رندرر و کتابخانه‌ی کامپوننت‌ها) — MIT، پروژه‌ی [thesysdev/openui](https://github.com/thesysdev/openui). فایل‌های از پیش‌ساخته‌ی `@openuidev/browser-bundle@0.1.4` در `src/gui/vendor/openui/` قرار دارند (جزئیات و روش به‌روزرسانی در همان پوشه).
+- توکن‌های طراحی رابط کاربری (رنگ‌های oklch، فاصله‌ها، شعاع‌ها، سایه‌ها) از همان پروژه گرفته شده‌اند تا GUI و داشبورد یک زبان بصری داشته باشند.
 
 ## مجوز / License
 
-MIT — ببینید [`LICENSE`](LICENSE).
+MIT — ببینید [`LICENSE`](LICENSE). اجزای OpenUI هم MIT هستند (فایل مجوز آن‌ها کنار خودشان نگه داشته شده است).

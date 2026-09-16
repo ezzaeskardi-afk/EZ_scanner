@@ -9,3 +9,6 @@ ez-sessions/
 .env.local
 coverage/
 tmp/
+
+# local scratch (OpenUI source clone used while building the design system)
+.cache/

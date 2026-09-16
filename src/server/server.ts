@@ -14,11 +14,12 @@ import { buildTargets } from '../core/ipsrc.ts';
 import { Scanner, resultKey, type ScannerState } from '../core/scanner.ts';
 import { describeConfig, isParsedConfig, parseShareLink, sniRiskWarnings } from '../core/configparse.ts';
 import { exportResults, summarize, type ExportFormat } from '../core/export.ts';
+import { buildOpenUiReport } from '../core/openui.ts';
 import { applyPreset, type IpResult, type LogLine, type ScanConfig, type SourceSpec } from '../core/types.ts';
 import { sanitizeConfig, sanitizeSource } from '../core/validate.ts';
 import { runDoctor } from './doctor.ts';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const MAX_BODY = 32 * 1024 * 1024;
 
 export interface EzServerOptions {
@@ -237,6 +238,32 @@ export async function createEzServer(opts: EzServerOptions = {}): Promise<EzServ
 
       if (pathname === '/api/state') {
         json(res, 200, await statePayload(url.searchParams));
+        return;
+      }
+
+      // OpenUI Lang dashboard of the current scan (rendered by /report.html).
+      if (pathname === '/api/report/openui' && req.method === 'GET') {
+        const language = url.searchParams.get('lang') === 'en' ? 'en' : 'fa';
+        const report = buildOpenUiReport({
+          stats: scanner.getStats(),
+          config: scanner.config,
+          source: scanner.source,
+          state: scanner.getState(),
+          results: scanner.getResults('score'),
+          failures: scanner.getFailures().samples,
+          version: VERSION,
+          language,
+          topN: Number(url.searchParams.get('top') ?? 25) || 25,
+        });
+        if (url.searchParams.get('download') === '1') {
+          res.writeHead(200, {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Content-Disposition': `attachment; filename="ez-scanner-report.openui.md"`,
+          });
+          res.end(report.code);
+          return;
+        }
+        json(res, 200, { ok: true, ...report });
         return;
       }
 

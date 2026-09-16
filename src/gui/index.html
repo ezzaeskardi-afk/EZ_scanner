@@ -24,6 +24,7 @@
         <span class="badge" id="badge-state" data-i18n="state.idle">آماده</span>
         <span class="badge" id="badge-network" data-i18n="net.unknown">وضعیت خط: نامعلوم</span>
         <span class="badge ghost" id="badge-version">v__EZ_VERSION__</span>
+        <button class="ghost-btn" id="btn-theme" title="Dark / Light">تیره</button>
         <button class="ghost-btn" id="btn-lang" title="English / فارسی">EN</button>
       </div>
     </header>
@@ -233,7 +234,27 @@
         </div>
         <p class="muted small" id="results-note"></p>
 
-        <h2 data-i18n="export.title">۴. خروجی و ترکیب با کانفیگ</h2>
+        <div class="report-head">
+          <h2 data-i18n="report.title">۴. داشبورد OpenUI</h2>
+          <span class="spacer"></span>
+          <button id="btn-report-refresh" data-i18n="report.refresh">بازخوانی گزارش</button>
+          <button id="btn-report-open" class="ghost-btn" data-i18n="report.open">تب جدید</button>
+          <button id="btn-report-copy" class="ghost-btn" data-i18n="report.copy">کپی کد Lang</button>
+          <button id="btn-report-download" class="ghost-btn" data-i18n="report.download">دانلود کد Lang</button>
+        </div>
+        <p class="muted small" data-i18n="report.hint">
+          این داشبورد از کد OpenUI Lang ساخته‌شده توسط همین اسکنر و با موتور رندر رسمی پروژه‌ی OpenUI
+          (thesysdev/openui) کشیده می‌شود. همه‌ی فایل‌ها محلی‌اند (بدون CDN).
+        </p>
+        <iframe
+          id="report-frame"
+          class="report-frame"
+          src="/report.html?embed=1"
+          title="OpenUI report"
+          loading="lazy"
+        ></iframe>
+
+        <h2 class="section-gap" data-i18n="export.title">۵. خروجی و ترکیب با کانفیگ</h2>
         <div class="exports">
           <label class="row"><span data-i18n="export.template">لینک کانفیگ (برای ساخت خروجی)</span>
             <input type="text" id="export-template" placeholder="vless://uuid@host:443?type=ws&security=tls&sni=…" />
@@ -255,7 +276,7 @@
 
       <!-- ───────────────── tools ───────────────── -->
       <aside class="panel tools">
-        <h2 data-i18n="tools.title">۵. ابزارها</h2>
+        <h2 data-i18n="tools.title">۶. ابزارها</h2>
 
         <section>
           <h3 data-i18n="tools.sessions">نشست‌های ذخیره‌شده</h3>

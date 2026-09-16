@@ -49,6 +49,37 @@ test('serves the GUI shell with the per-run token injected', async () => {
   assert.equal(missing.status, 404);
 });
 
+test('serves the OpenUI report page and its vendored renderer offline', async () => {
+  const page = await fetch(`${base}/report.html`);
+  assert.equal(page.status, 200);
+  const html = await page.text();
+  assert.ok(html.includes('/vendor/openui/openui-bundle.min.js'), 'renderer is loaded from our own origin');
+  assert.ok(!/https?:\/\/(cdn|unpkg)/.test(html), 'no CDN dependencies');
+
+  const bundle = await fetch(`${base}/vendor/openui/openui-bundle.min.js`);
+  assert.equal(bundle.status, 200);
+  assert.match(bundle.headers.get('content-type') ?? '', /javascript/);
+  const styles = await fetch(`${base}/vendor/openui/openui-styles.css`);
+  assert.equal(styles.status, 200);
+  assert.match(styles.headers.get('content-type') ?? '', /text\/css/);
+});
+
+test('the OpenUI report endpoint renders the current scan as OpenUI Lang', async () => {
+  const idle = await getJson<{ ok: boolean; code: string; counts: { addresses: number } }>('/api/report/openui');
+  assert.equal(idle.ok, true);
+  assert.match(idle.code, /^root = Card\(\[/);
+  assert.match(idle.code, /Callout\("neutral"/);
+
+  const english = (await fetch(`${base}/api/report/openui?lang=en&top=5`).then((r) => r.json())) as { code: string };
+  assert.ok(english.code.includes('EZ Scanner'));
+  assert.ok(!english.code.includes('گزارش'));
+
+  const download = await fetch(`${base}/api/report/openui?download=1`);
+  assert.equal(download.status, 200);
+  assert.match(download.headers.get('content-disposition') ?? '', /attachment/);
+  assert.match(await download.text(), /^root = Card\(\[/);
+});
+
 test('mutating endpoints require the token and same-origin', async () => {
   const noToken = await fetch(`${base}/api/scan/pause`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
   assert.equal(noToken.status, 403);

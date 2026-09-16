@@ -19,7 +19,7 @@ import { createEzServer } from '../server/server.ts';
 import { runDoctor, runSelfTest } from '../server/doctor.ts';
 import { Output, RESULT_HEADERS, nextStepHints, printDoctor, resultRow } from './render.ts';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 
 /* ───────────────────────────── arg parsing ───────────────────────────── */
 

@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="fa" dir="rtl" data-lang="fa">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EZ Scanner — OpenUI report</title>
+    <!--
+      OpenUI report surface.
+
+      This page embeds the scan report as *OpenUI Lang* and renders it with
+      OpenUI's own renderer + component library (vendored in ./vendor/openui so
+      the GUI keeps working with no CDN and no build step — important on lines
+      where jsDelivr/unpkg are filtered).
+
+      It is intentionally standalone so the parent GUI can iframe it: OpenUI's
+      stylesheet owns the :root tokens here and cannot leak into the scanner UI.
+    -->
+    <link rel="stylesheet" href="/vendor/openui/openui-styles.css" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <style>
+      /*
+        OpenUI ships light + `prefers-color-scheme: dark` tokens. The parent GUI
+        lets the user force a theme, so mirror their dark palette under an
+        explicit attribute (higher specificity than `:root`).
+      */
+      html[data-theme='dark'] {
+        color-scheme: dark;
+        --openui-background: oklch(0.145 0 0 / 1);
+        --openui-foreground: oklch(0.205 0 0 / 1);
+        --openui-popover-background: oklch(0.205 0 0 / 1);
+        --openui-sunk-light: oklch(0.994 0 89.876 / 0.02);
+        --openui-sunk: oklch(0.994 0 89.876 / 0.04);
+        --openui-sunk-deep: oklch(0.994 0 89.876 / 0.08);
+        --openui-elevated: oklch(0.994 0 89.876 / 0.1);
+        --openui-text-neutral-primary: oklch(0.985 0 89.876 / 1);
+        --openui-text-neutral-secondary: oklch(0.985 0 89.876 / 0.6);
+        --openui-text-neutral-tertiary: oklch(0.985 0 89.876 / 0.4);
+        --openui-text-success-primary: oklch(0.871 0.136 154.449 / 1);
+        --openui-text-alert-primary: oklch(0.905 0.166 98.111 / 1);
+        --openui-text-danger-primary: oklch(0.808 0.103 19.571 / 1);
+        --openui-text-info-primary: oklch(0.809 0.096 251.813 / 1);
+        --openui-border-default: oklch(0.994 0 89.876 / 0.08);
+        --openui-border-interactive: oklch(0.994 0 89.876 / 0.16);
+        --openui-border-interactive-emphasis: oklch(0.994 0 89.876 / 0.4);
+        --openui-border-accent: oklch(0.546 0.215 262.881 / 0.45);
+        --openui-shadow-s: 0 1px 3px -2px oklch(0 0 0 / 0.5);
+        --openui-shadow-xl: 0 12px 32px -8px oklch(0 0 0 / 0.7);
+      }
+      html,
+      body {
+        margin: 0;
+        background: var(--openui-background);
+        color: var(--openui-text-neutral-primary);
+        font-family: var(--openui-font-body);
+        font-size: 14px;
+      }
+      body {
+        padding: var(--openui-space-m-l);
+      }
+      html[dir='rtl'] body {
+        font-family: 'Vazirmatn', 'Segoe UI', Tahoma, var(--openui-font-body);
+      }
+      .bar {
+        display: flex;
+        align-items: center;
+        gap: var(--openui-space-s);
+        margin-bottom: var(--openui-space-m-l);
+        flex-wrap: wrap;
+      }
+      .bar h1 {
+        font: var(--openui-text-heading-xs);
+        letter-spacing: var(--openui-text-heading-xs-letter-spacing);
+        margin: 0 auto 0 0;
+      }
+      html[dir='rtl'] .bar h1 {
+        margin: 0 0 0 auto;
+      }
+      .bar button {
+        font: var(--openui-text-label-sm);
+        color: var(--openui-text-neutral-primary);
+        background: var(--openui-foreground);
+        border: 1px solid var(--openui-border-interactive);
+        border-radius: var(--openui-radius-m);
+        padding: var(--openui-space-xs) var(--openui-space-m);
+        cursor: pointer;
+      }
+      .bar button:hover {
+        border-color: var(--openui-border-interactive-emphasis);
+      }
+      .bar button.primary {
+        background: var(--openui-interactive-accent-default);
+        border-color: transparent;
+        color: var(--openui-text-accent-primary);
+      }
+      .bar .meta {
+        font: var(--openui-text-body-xs);
+        color: var(--openui-text-neutral-secondary);
+      }
+      .fallback {
+        border: 1px solid var(--openui-border-alert-emphasis);
+        background: var(--openui-alert-background);
+        border-radius: var(--openui-radius-xl);
+        padding: var(--openui-space-m-l);
+        margin-bottom: var(--openui-space-m-l);
+      }
+      .fallback pre {
+        direction: ltr;
+        text-align: left;
+        max-height: 320px;
+        overflow: auto;
+        font: var(--openui-text-code-sm);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      #code {
+        direction: ltr;
+        text-align: left;
+        font: var(--openui-text-code-sm);
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 340px;
+        overflow: auto;
+        border: 1px solid var(--openui-border-default);
+        border-radius: var(--openui-radius-xl);
+        padding: var(--openui-space-m);
+        background: var(--openui-foreground);
+      }
+      .hidden {
+        display: none !important;
+      }
+      #errors {
+        font: var(--openui-text-body-xs);
+        color: var(--openui-text-danger-primary);
+        white-space: pre-wrap;
+      }
+    </style>
+    <script src="/vendor/openui/openui-bundle.min.js" defer></script>
+  </head>
+  <body>
+    <div class="bar">
+      <h1 id="title">گزارش OpenUI</h1>
+      <span class="meta" id="meta"></span>
+    </div>
+
+    <div id="fallback" class="fallback hidden">
+      <strong id="fallback-title"></strong>
+      <p id="fallback-body"></p>
+      <pre id="fallback-code"></pre>
+    </div>
+
+    <div id="root"></div>
+    <p id="errors" class="hidden"></p>
+
+    <script>
+      const params = new URLSearchParams(location.search);
+      const lang = params.get('lang') === 'en' ? 'en' : 'fa';
+      const embed = params.get('embed') === '1';
+      const theme = params.get('theme');
+      const topN = Math.max(1, Math.min(200, Number(params.get('top') ?? 25) || 25));
+      if (theme === 'dark' || theme === 'light') document.documentElement.dataset.theme = theme;
+      const root = document.getElementById('root');
+      const errorsEl = document.getElementById('errors');
+
+      document.documentElement.lang = lang;
+      document.documentElement.dir = lang === 'fa' ? 'rtl' : 'ltr';
+
+      const TEXT = {
+        fa: {
+          title: 'گزارش OpenUI',
+          refresh: 'بازخوانی',
+          copy: 'کپی کد Lang',
+          download: 'دانلود کد Lang',
+          toggle: 'نمایش کد Lang',
+          copied: 'کد OpenUI Lang کپی شد',
+          empty: 'هنوز نتیجه‌ای برای نمایش نیست — یک اسکن اجرا کن.',
+          noBundleTitle: 'بسته‌ی OpenUI بارگذاری نشد',
+          noBundleBody:
+            'فایل‌های رندرر پیدا نشدند (src/gui/vendor/openui). کد OpenUI Lang همان پایین است؛ می‌توانی آن را در OpenUI Playground هم اجرا کنی.',
+        },
+        en: {
+          title: 'OpenUI report',
+          refresh: 'Refresh',
+          copy: 'Copy Lang code',
+          download: 'Download Lang code',
+          toggle: 'Show Lang code',
+          copied: 'OpenUI Lang code copied',
+          empty: 'No results to render yet — run a scan.',
+          noBundleTitle: 'OpenUI bundle did not load',
+          noBundleBody:
+            'The renderer assets are missing (src/gui/vendor/openui). The OpenUI Lang source is below — it also runs in the OpenUI Playground.',
+        },
+      }[lang];
+
+      document.getElementById('title').textContent = TEXT.title;
+      if (embed) document.querySelector('.bar').classList.add('hidden');
+
+      const bar = document.querySelector('.bar');
+      const btnRefresh = document.createElement('button');
+      btnRefresh.textContent = TEXT.refresh;
+      const btnToggle = document.createElement('button');
+      btnToggle.textContent = TEXT.toggle;
+      const btnCopy = document.createElement('button');
+      btnCopy.textContent = TEXT.copy;
+      const btnDownload = document.createElement('button');
+      btnDownload.textContent = TEXT.download;
+      bar.append(btnRefresh, btnToggle, btnCopy, btnDownload);
+
+      let code = '';
+
+      function showFallback(title, body) {
+        const box = document.getElementById('fallback');
+        document.getElementById('fallback-title').textContent = title;
+        document.getElementById('fallback-body').textContent = body;
+        document.getElementById('fallback-code').textContent = code;
+        box.classList.remove('hidden');
+      }
+
+      function render() {
+        errorsEl.classList.add('hidden');
+        errorsEl.textContent = '';
+        const openui = window.__OpenUI;
+        if (!openui?.Renderer) {
+          root.replaceChildren();
+          showFallback(TEXT.noBundleTitle, TEXT.noBundleBody);
+          return;
+        }
+        if (document.getElementById('code') === null) {
+          const pre = document.createElement('pre');
+          pre.id = 'code';
+          pre.className = 'hidden';
+          root.after(pre);
+        }
+        document.getElementById('code').textContent = code;
+        // The bundle's public contract exposes the renderer plus the chat
+        // library (which carries its own parser schema).
+        const chat = openui.openuiChatLibrary ?? {};
+        const library = chat.library ?? chat;
+        const schema = chat.schema ?? chat.parserSchema;
+        const props = {
+          code,
+          response: code, // prop name differs between bundle versions
+          library,
+          schema,
+          isStreaming: false,
+          onParseResult: (result) => {
+            const issues = result?.issues ?? result?.errors ?? [];
+            const fixable = issues.filter((issue) => issue?.fixable !== false);
+            if (!fixable.length) return;
+            errorsEl.textContent = fixable.map((issue) => issue.message ?? String(issue)).join('\n');
+            errorsEl.classList.remove('hidden');
+          },
+        };
+        try {
+          root.replaceChildren();
+          openui.createRoot(root).render(openui.React.createElement(openui.Renderer, props));
+        } catch (err) {
+          showFallback(TEXT.noBundleTitle, String(err && err.message ? err.message : err));
+        }
+      }
+
+      async function load() {
+        const res = await fetch(`/api/report/openui?lang=${lang}&top=${topN}`);
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error ?? `${res.status} ${res.statusText}`);
+        code = data.code;
+        document.getElementById('meta').textContent = `${data.counts.addresses} checked · ${data.counts.healthy} clean · ${data.counts.failures} failures`;
+        if (!data.counts.addresses && !data.counts.reachable) {
+          errorsEl.textContent = TEXT.empty;
+          errorsEl.classList.remove('hidden');
+        }
+        render();
+      }
+
+      bar.addEventListener('click', async (event) => {
+        const label = event.target.textContent;
+        if (label === TEXT.refresh) {
+          try {
+            await load();
+          } catch (err) {
+            showFallback(TEXT.noBundleTitle, String(err.message ?? err));
+          }
+        } else if (label === TEXT.toggle) {
+          const pre = document.getElementById('code');
+          if (pre) pre.classList.toggle('hidden');
+        } else if (label === TEXT.copy) {
+          try {
+            await navigator.clipboard.writeText(code);
+            btnCopy.textContent = TEXT.copied;
+            setTimeout(() => (btnCopy.textContent = TEXT.copy), 1800);
+          } catch {
+            window.prompt(TEXT.copy, code);
+          }
+        } else if (label === TEXT.download) {
+          const url = URL.createObjectURL(new Blob([code], { type: 'text/plain' }));
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'ez-scanner-report.openui.md';
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+      });
+
+      // The parent GUI pings us after a scan finishes so the dashboard stays fresh.
+      window.addEventListener('message', (event) => {
+        if (event.data?.type === 'ez-report-refresh') load().catch(() => {});
+      });
+
+      window.addEventListener('DOMContentLoaded', () =>
+        load().catch((err) => showFallback(TEXT.noBundleTitle, String(err.message ?? err))),
+      );
+      // DOMContentLoaded may already have fired by the time this inline script runs.
+      if (document.readyState !== 'loading') load().catch(() => {});
+    </script>
+  </body>
+</html>
