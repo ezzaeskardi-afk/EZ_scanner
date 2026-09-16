@@ -59,31 +59,6 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-export function throttle<T>(fn: (value: T) => void, ms: number): (value: T) => void {
-  let last = 0;
-  let pending: T | null = null;
-  let timer: NodeJS.Timeout | null = null;
-  return (value: T) => {
-    const now = Date.now();
-    if (now - last >= ms) {
-      last = now;
-      fn(value);
-      return;
-    }
-    pending = value;
-    if (timer) return;
-    timer = setTimeout(() => {
-      timer = null;
-      last = Date.now();
-      if (pending !== null) {
-        const next = pending;
-        pending = null;
-        fn(next);
-      }
-    }, ms - (now - last));
-  };
-}
-
 /** Runs `fn` over `items` with a fixed concurrency, honouring an abort signal. */
 export async function runPool<T>(
   items: T[],

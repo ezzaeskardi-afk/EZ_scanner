@@ -1,6 +1,6 @@
 {
   "name": "ez-scanner",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "EZ Scanner — clean-IP discovery engine for Cloudflare/SNI tunnels with a powerful local GUI (FA/EN) and a scriptable CLI",
   "type": "module",
   "license": "MIT",

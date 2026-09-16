@@ -19,9 +19,6 @@
   --openui-popover-background: oklch(0.994 0 89.876 / 1);
   --openui-sunk-light: oklch(0.097 0 0 / 0.02);
   --openui-sunk: oklch(0.097 0 0 / 0.04);
-  --openui-sunk-deep: oklch(0.097 0 0 / 0.08);
-  --openui-elevated: oklch(0.097 0 0 / 0.08);
-  --openui-inverted-background: oklch(0.097 0 0 / 1);
   --openui-info-background: oklch(0.623 0.188 259.815 / 0.12);
   --openui-success-background: oklch(0.627 0.17 149.214 / 0.12);
   --openui-alert-background: oklch(0.795 0.162 86.047 / 0.16);
@@ -30,7 +27,6 @@
   --openui-text-neutral-primary: oklch(0.097 0 0 / 1);
   --openui-text-neutral-secondary: oklch(0.097 0 0 / 0.55);
   --openui-text-neutral-tertiary: oklch(0.097 0 0 / 0.35);
-  --openui-text-white: oklch(1 0 89.876 / 1);
   --openui-text-accent-primary: oklch(0.994 0 89.876 / 1);
   --openui-text-success-primary: oklch(0.448 0.108 151.328 / 1);
   --openui-text-alert-primary: oklch(0.476 0.103 61.907 / 1);
@@ -44,7 +40,6 @@
 
   --openui-interactive-accent-default: oklch(0.546 0.215 262.881 / 1);
   --openui-interactive-accent-hover: oklch(0.546 0.215 262.881 / 0.85);
-  --openui-interactive-destructive-accent-default: oklch(0.577 0.215 27.325 / 1);
   --openui-interactive-destructive-hover: oklch(0.577 0.215 27.325 / 0.08);
 
   --openui-space-3xs: 2px;
@@ -56,10 +51,7 @@
   --openui-space-m-l: 16px;
   --openui-space-l: 18px;
   --openui-space-xl: 24px;
-  --openui-space-2xl: 36px;
 
-  --openui-radius-xs: 4px;
-  --openui-radius-s: 6px;
   --openui-radius-m: 8px;
   --openui-radius-l: 10px;
   --openui-radius-xl: 12px;
@@ -70,8 +62,6 @@
   --openui-font-code: 'SFMono-Regular', Menlo, Consolas, ui-monospace, monospace;
 
   --openui-shadow-s: 0 1px 3px -2px oklch(0 0 0 / 0.06), 0 2px 5px -2px oklch(0 0 0 / 0.1);
-  --openui-shadow-m: 0 4px 6px -2px oklch(0 0 0 / 0.08), 0 2px 2px -2px oklch(0 0 0 / 0.12);
-  --openui-shadow-l: 0 4px 4px -2px oklch(0 0 0 / 0.12), 0 4px 8px -2px oklch(0 0 0 / 0.1);
   --openui-shadow-xl: 0 8px 16px -4px oklch(0 0 0 / 0.16), 0 16px 32px -6px oklch(0 0 0 / 0.2);
 
   /* app aliases */
@@ -95,9 +85,6 @@
   --openui-popover-background: oklch(0.205 0 0 / 1);
   --openui-sunk-light: oklch(0.994 0 89.876 / 0.02);
   --openui-sunk: oklch(0.994 0 89.876 / 0.04);
-  --openui-sunk-deep: oklch(0.994 0 89.876 / 0.08);
-  --openui-elevated: oklch(0.994 0 89.876 / 0.1);
-  --openui-inverted-background: oklch(0.994 0 89.876 / 1);
 
   --openui-text-neutral-primary: oklch(0.985 0 89.876 / 1);
   --openui-text-neutral-secondary: oklch(0.985 0 89.876 / 0.6);
@@ -113,8 +100,6 @@
   --openui-border-accent: oklch(0.546 0.215 262.881 / 0.45);
 
   --openui-shadow-s: 0 1px 3px -2px oklch(0 0 0 / 0.5), 0 2px 5px -2px oklch(0 0 0 / 0.4);
-  --openui-shadow-m: 0 4px 6px -2px oklch(0 0 0 / 0.5);
-  --openui-shadow-l: 0 4px 8px -2px oklch(0 0 0 / 0.5);
   --openui-shadow-xl: 0 12px 32px -8px oklch(0 0 0 / 0.7);
 }
 
@@ -127,9 +112,6 @@
     --openui-popover-background: oklch(0.205 0 0 / 1);
     --openui-sunk-light: oklch(0.994 0 89.876 / 0.02);
     --openui-sunk: oklch(0.994 0 89.876 / 0.04);
-    --openui-sunk-deep: oklch(0.994 0 89.876 / 0.08);
-    --openui-elevated: oklch(0.994 0 89.876 / 0.1);
-    --openui-inverted-background: oklch(0.994 0 89.876 / 1);
 
     --openui-text-neutral-primary: oklch(0.985 0 89.876 / 1);
     --openui-text-neutral-secondary: oklch(0.985 0 89.876 / 0.6);
@@ -145,8 +127,6 @@
     --openui-border-accent: oklch(0.546 0.215 262.881 / 0.45);
 
     --openui-shadow-s: 0 1px 3px -2px oklch(0 0 0 / 0.5), 0 2px 5px -2px oklch(0 0 0 / 0.4);
-    --openui-shadow-m: 0 4px 6px -2px oklch(0 0 0 / 0.5);
-    --openui-shadow-l: 0 4px 8px -2px oklch(0 0 0 / 0.5);
     --openui-shadow-xl: 0 12px 32px -8px oklch(0 0 0 / 0.7);
   }
 }
@@ -694,13 +674,32 @@ tr.not-healthy td.ip {
 .report-head h2 {
   margin: 0;
 }
+.report-mount {
+  position: relative;
+}
 .report-frame {
+  display: block;
   width: 100%;
   height: 640px;
   border: 1px solid var(--line);
   border-radius: var(--openui-radius-xl);
   background: var(--panel);
   box-shadow: var(--openui-shadow-s);
+}
+/* Click target shown while the (heavy) report bundle has not been mounted yet. */
+.report-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border-radius: var(--openui-radius-xl);
+  background: var(--openui-sunk-light);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.report-overlay:hover {
+  background: var(--openui-sunk);
+  color: var(--text);
 }
 
 /* ─────────────────────────── export / tools ─────────────────────────── */

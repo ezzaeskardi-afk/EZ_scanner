@@ -124,7 +124,7 @@ export function tlsConnect(
   });
 }
 
-export function isIpLiteral(host: string): boolean {
+function isIpLiteral(host: string): boolean {
   if (net.isIP(host)) return true;
   return /^\[.*\]$/.test(host);
 }

@@ -24,7 +24,7 @@ import {
   type ConnectedSocket,
 } from './net.ts';
 
-export const BROWSER_UA =
+const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
 
 export interface ProbeTarget {
@@ -33,7 +33,7 @@ export interface ProbeTarget {
   sni: string;
 }
 
-export function mapError(err: unknown, elapsedMs: number): ProbeAttempt {
+function mapError(err: unknown, elapsedMs: number): ProbeAttempt {
   const code = (err as NodeJS.ErrnoException)?.code;
   const message = (err as Error)?.message ?? String(err);
   if (err instanceof AbortedError) return { ok: false, latencyMs: elapsedMs, error: 'aborted', errorMessage: 'aborted' };

@@ -95,7 +95,7 @@ export class Output {
   }
 }
 
-export function healthTag(result: IpResult): string {
+function healthTag(result: IpResult): string {
   if (result.healthy) return '[OK]';
   if (result.successes > 0) return '[--]';
   return '[!!]';

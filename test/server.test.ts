@@ -49,6 +49,28 @@ test('serves the GUI shell with the per-run token injected', async () => {
   assert.equal(missing.status, 404);
 });
 
+test('static assets are gzip-compressed and versioned ones are cacheable', async () => {
+  const identity = await fetch(`${base}/styles.css`, { headers: { 'accept-encoding': 'identity' } });
+  const raw = await identity.text();
+  assert.equal(identity.headers.get('content-encoding'), null);
+  assert.equal(identity.headers.get('cache-control'), 'no-store');
+
+  const gzipped = await fetch(`${base}/styles.css`, { headers: { 'accept-encoding': 'gzip' } });
+  assert.equal(gzipped.headers.get('content-encoding'), 'gzip');
+  assert.match(gzipped.headers.get('vary') ?? '', /accept-encoding/i);
+  assert.ok(
+    Number(gzipped.headers.get('content-length')) < Number(identity.headers.get('content-length')),
+    'compressed length should be smaller',
+  );
+  assert.equal(await gzipped.text(), raw, 'compression must not change the body');
+
+  // The vendored bundle is the reason this exists: 3.5 MB -> ~1 MB.
+  const bundle = await fetch(`${base}/vendor/openui/openui-bundle.min.js?v=0.1.4`);
+  assert.equal(bundle.headers.get('content-encoding'), 'gzip');
+  assert.match(bundle.headers.get('cache-control') ?? '', /immutable/);
+  assert.ok(Number(bundle.headers.get('content-length')) < 1_500_000);
+});
+
 test('serves the OpenUI report page and its vendored renderer offline', async () => {
   const page = await fetch(`${base}/report.html`);
   assert.equal(page.status, 200);

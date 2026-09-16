@@ -17,6 +17,7 @@
  *    to a single `Card(children)` and rejects unknown components, so a typo
  *    would silently drop a whole subtree.
  */
+import { median } from './scoring.ts';
 import type { IpResult, ScanConfig, ScanStats, SourceSpec } from './types.ts';
 
 export interface OpenUiReportInput {
@@ -239,7 +240,7 @@ export function buildOpenUiReport(input: OpenUiReportInput): OpenUiReport {
   const topN = Math.max(1, Math.min(200, input.topN ?? 25));
 
   const latencies = healthy.map((r) => r.medianLatency).filter((v) => v > 0);
-  const median = latencies.length ? medianOf(latencies) : 0;
+  const medianLatency = latencies.length ? median(latencies) : 0;
   const bestIp = [...healthy].sort((a, b) => a.medianLatency - b.medianLatency)[0];
   const best = bestIp?.medianLatency ?? 0;
   const down = healthy.reduce((max, r) => Math.max(max, r.downMbps || 0), 0);
@@ -264,7 +265,7 @@ export function buildOpenUiReport(input: OpenUiReportInput): OpenUiReport {
     `${cfg.mode} :${cfg.port}`,
     input.source?.kind ?? '',
     input.state ?? '',
-    `v${input.version ?? '1.1.0'}`,
+    `v${input.version ?? '1.1.1'}`,
   ]);
 
   lines.push(`header = CardHeader(${q(L.title)}, ${q(subtitle)})`);
@@ -296,7 +297,9 @@ export function buildOpenUiReport(input: OpenUiReportInput): OpenUiReport {
     kpi('checked', 'radar', 'info', L.checked, L.checkedSub, 'number', String(stats?.done ?? results.length + failures.length), `${stats?.total ?? 0} total`),
   );
   kpis.push(kpi('clean', 'shield-check', 'success', L.clean, L.cleanSub, 'number', String(healthy.length), rateOf(healthy.length, Math.max(1, stats?.done ?? results.length))));
-  kpis.push(kpi('median', 'timer', 'neutral', L.median, L.medianSub, 'number', median ? `${Math.round(median)}ms` : '—', cfg.maxLatencyMs ? `cap ${cfg.maxLatencyMs}ms` : ''));
+  kpis.push(
+    kpi('median', 'timer', 'neutral', L.median, L.medianSub, 'number', medianLatency ? `${Math.round(medianLatency)}ms` : '—', cfg.maxLatencyMs ? `cap ${cfg.maxLatencyMs}ms` : ''),
+  );
   kpis.push(kpi('best', 'zap', 'success', L.best, L.bestSub, 'number', best ? `${Math.round(best)}ms` : '—', bestIp?.colo ? `edge ${bestIp.colo}` : ''));
   if (down > 0) {
     kpis.push(kpi('down', 'download', 'info', L.download, L.downloadSub, 'number', `${down.toFixed(1)}Mbps`, 'direct probe'));
@@ -401,12 +404,6 @@ function kpi(
     `kpi%IDX%icon = Icon(${q(icon)}, "system")`,
     `kpi%IDX%rhs = BoldText(${q(valueVariant)}, ${q(value)}, ${q(subtext)}, "metric")`,
   ].join('\n');
-}
-
-function medianOf(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 function rateOf(part: number, total: number): string {

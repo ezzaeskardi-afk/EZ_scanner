@@ -8,14 +8,17 @@
       OpenUI report surface.
 
       This page embeds the scan report as *OpenUI Lang* and renders it with
-      OpenUI's own renderer + component library (vendored in ./vendor/openui so
+      OpenUI's own renderer + component library (vendored in ./vendor/openui, so
       the GUI keeps working with no CDN and no build step — important on lines
       where jsDelivr/unpkg are filtered).
 
-      It is intentionally standalone so the parent GUI can iframe it: OpenUI's
-      stylesheet owns the :root tokens here and cannot leak into the scanner UI.
+      It is standalone so the parent GUI can iframe it: OpenUI's stylesheet owns
+      the :root tokens here and cannot leak into the scanner UI.
+
+      Query parameters: lang=fa|en, theme=light|dark, top=<rows>, embed=1 (hides the toolbar).
     -->
-    <link rel="stylesheet" href="/vendor/openui/openui-styles.css" />
+    <!-- `?v=` pins the vendored bundle version, which lets the server cache these two files hard. -->
+    <link rel="stylesheet" href="/vendor/openui/openui-styles.css?v=0.1.4" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <style>
       /*
@@ -87,12 +90,7 @@
       .bar button:hover {
         border-color: var(--openui-border-interactive-emphasis);
       }
-      .bar button.primary {
-        background: var(--openui-interactive-accent-default);
-        border-color: transparent;
-        color: var(--openui-text-accent-primary);
-      }
-      .bar .meta {
+      .meta {
         font: var(--openui-text-body-xs);
         color: var(--openui-text-neutral-secondary);
       }
@@ -102,15 +100,6 @@
         border-radius: var(--openui-radius-xl);
         padding: var(--openui-space-m-l);
         margin-bottom: var(--openui-space-m-l);
-      }
-      .fallback pre {
-        direction: ltr;
-        text-align: left;
-        max-height: 320px;
-        overflow: auto;
-        font: var(--openui-text-code-sm);
-        white-space: pre-wrap;
-        word-break: break-word;
       }
       #code {
         direction: ltr;
@@ -124,6 +113,7 @@
         border-radius: var(--openui-radius-xl);
         padding: var(--openui-space-m);
         background: var(--openui-foreground);
+        margin: var(--openui-space-m) 0 0;
       }
       .hidden {
         display: none !important;
@@ -134,12 +124,16 @@
         white-space: pre-wrap;
       }
     </style>
-    <script src="/vendor/openui/openui-bundle.min.js" defer></script>
+    <script src="/vendor/openui/openui-bundle.min.js?v=0.1.4" defer></script>
   </head>
   <body>
     <div class="bar">
       <h1 id="title">گزارش OpenUI</h1>
       <span class="meta" id="meta"></span>
+      <button data-action="refresh" type="button"></button>
+      <button data-action="toggle" type="button"></button>
+      <button data-action="copy" type="button"></button>
+      <button data-action="download" type="button"></button>
     </div>
 
     <div id="fallback" class="fallback hidden">
@@ -149,17 +143,15 @@
     </div>
 
     <div id="root"></div>
+    <pre id="code" class="hidden"></pre>
     <p id="errors" class="hidden"></p>
 
     <script>
       const params = new URLSearchParams(location.search);
       const lang = params.get('lang') === 'en' ? 'en' : 'fa';
-      const embed = params.get('embed') === '1';
-      const theme = params.get('theme');
       const topN = Math.max(1, Math.min(200, Number(params.get('top') ?? 25) || 25));
+      const theme = params.get('theme');
       if (theme === 'dark' || theme === 'light') document.documentElement.dataset.theme = theme;
-      const root = document.getElementById('root');
-      const errorsEl = document.getElementById('errors');
 
       document.documentElement.lang = lang;
       document.documentElement.dir = lang === 'fa' ? 'rtl' : 'ltr';
@@ -171,7 +163,7 @@
           copy: 'کپی کد Lang',
           download: 'دانلود کد Lang',
           toggle: 'نمایش کد Lang',
-          copied: 'کد OpenUI Lang کپی شد',
+          copied: 'کپی شد',
           empty: 'هنوز نتیجه‌ای برای نمایش نیست — یک اسکن اجرا کن.',
           noBundleTitle: 'بسته‌ی OpenUI بارگذاری نشد',
           noBundleBody:
@@ -183,7 +175,7 @@
           copy: 'Copy Lang code',
           download: 'Download Lang code',
           toggle: 'Show Lang code',
-          copied: 'OpenUI Lang code copied',
+          copied: 'Copied',
           empty: 'No results to render yet — run a scan.',
           noBundleTitle: 'OpenUI bundle did not load',
           noBundleBody:
@@ -192,61 +184,48 @@
       }[lang];
 
       document.getElementById('title').textContent = TEXT.title;
-      if (embed) document.querySelector('.bar').classList.add('hidden');
+      if (params.get('embed') === '1') document.querySelector('.bar').classList.add('hidden');
+      for (const button of document.querySelectorAll('.bar button[data-action]')) {
+        button.textContent = TEXT[button.dataset.action];
+      }
 
-      const bar = document.querySelector('.bar');
-      const btnRefresh = document.createElement('button');
-      btnRefresh.textContent = TEXT.refresh;
-      const btnToggle = document.createElement('button');
-      btnToggle.textContent = TEXT.toggle;
-      const btnCopy = document.createElement('button');
-      btnCopy.textContent = TEXT.copy;
-      const btnDownload = document.createElement('button');
-      btnDownload.textContent = TEXT.download;
-      bar.append(btnRefresh, btnToggle, btnCopy, btnDownload);
-
+      const root = document.getElementById('root');
+      const codeEl = document.getElementById('code');
+      const errorsEl = document.getElementById('errors');
+      const fallbackEl = document.getElementById('fallback');
       let code = '';
 
       function showFallback(title, body) {
-        const box = document.getElementById('fallback');
         document.getElementById('fallback-title').textContent = title;
         document.getElementById('fallback-body').textContent = body;
         document.getElementById('fallback-code').textContent = code;
-        box.classList.remove('hidden');
+        fallbackEl.classList.remove('hidden');
       }
 
       function render() {
         errorsEl.classList.add('hidden');
         errorsEl.textContent = '';
+        codeEl.textContent = code;
+
         const openui = window.__OpenUI;
         if (!openui?.Renderer) {
           root.replaceChildren();
           showFallback(TEXT.noBundleTitle, TEXT.noBundleBody);
           return;
         }
-        if (document.getElementById('code') === null) {
-          const pre = document.createElement('pre');
-          pre.id = 'code';
-          pre.className = 'hidden';
-          root.after(pre);
-        }
-        document.getElementById('code').textContent = code;
-        // The bundle's public contract exposes the renderer plus the chat
-        // library (which carries its own parser schema).
+        // The bundle's documented contract exposes the renderer plus the chat
+        // library, which carries its own parser schema.
         const chat = openui.openuiChatLibrary ?? {};
-        const library = chat.library ?? chat;
-        const schema = chat.schema ?? chat.parserSchema;
         const props = {
           code,
-          response: code, // prop name differs between bundle versions
-          library,
-          schema,
+          response: code, // the prop was renamed across bundle versions
+          library: chat.library ?? chat,
+          schema: chat.schema ?? chat.parserSchema,
           isStreaming: false,
           onParseResult: (result) => {
-            const issues = result?.issues ?? result?.errors ?? [];
-            const fixable = issues.filter((issue) => issue?.fixable !== false);
-            if (!fixable.length) return;
-            errorsEl.textContent = fixable.map((issue) => issue.message ?? String(issue)).join('\n');
+            const issues = (result?.issues ?? result?.errors ?? []).filter((issue) => issue?.fixable !== false);
+            if (!issues.length) return;
+            errorsEl.textContent = issues.map((issue) => issue.message ?? String(issue)).join('\n');
             errorsEl.classList.remove('hidden');
           },
         };
@@ -254,16 +233,18 @@
           root.replaceChildren();
           openui.createRoot(root).render(openui.React.createElement(openui.Renderer, props));
         } catch (err) {
-          showFallback(TEXT.noBundleTitle, String(err && err.message ? err.message : err));
+          showFallback(TEXT.noBundleTitle, String(err?.message ?? err));
         }
       }
 
       async function load() {
+        fallbackEl.classList.add('hidden');
         const res = await fetch(`/api/report/openui?lang=${lang}&top=${topN}`);
         const data = await res.json();
         if (!res.ok || !data.ok) throw new Error(data.error ?? `${res.status} ${res.statusText}`);
         code = data.code;
-        document.getElementById('meta').textContent = `${data.counts.addresses} checked · ${data.counts.healthy} clean · ${data.counts.failures} failures`;
+        document.getElementById('meta').textContent =
+          `${data.counts.addresses} checked · ${data.counts.healthy} clean · ${data.counts.failures} failures`;
         if (!data.counts.addresses && !data.counts.reachable) {
           errorsEl.textContent = TEXT.empty;
           errorsEl.classList.remove('hidden');
@@ -271,45 +252,43 @@
         render();
       }
 
-      bar.addEventListener('click', async (event) => {
-        const label = event.target.textContent;
-        if (label === TEXT.refresh) {
-          try {
-            await load();
-          } catch (err) {
-            showFallback(TEXT.noBundleTitle, String(err.message ?? err));
-          }
-        } else if (label === TEXT.toggle) {
-          const pre = document.getElementById('code');
-          if (pre) pre.classList.toggle('hidden');
-        } else if (label === TEXT.copy) {
+      const ACTIONS = {
+        refresh: () => load().catch((err) => showFallback(TEXT.noBundleTitle, String(err?.message ?? err))),
+        toggle: () => codeEl.classList.toggle('hidden'),
+        copy: async (button) => {
           try {
             await navigator.clipboard.writeText(code);
-            btnCopy.textContent = TEXT.copied;
-            setTimeout(() => (btnCopy.textContent = TEXT.copy), 1800);
+            button.textContent = TEXT.copied;
+            setTimeout(() => (button.textContent = TEXT.copy), 1800);
           } catch {
             window.prompt(TEXT.copy, code);
           }
-        } else if (label === TEXT.download) {
+        },
+        download: () => {
           const url = URL.createObjectURL(new Blob([code], { type: 'text/plain' }));
           const a = document.createElement('a');
           a.href = url;
-          a.download = 'ez-scanner-report.openui.md';
+          a.download = `ez-scanner-report.openui.md`;
           a.click();
           URL.revokeObjectURL(url);
-        }
+        },
+      };
+
+      document.querySelector('.bar').addEventListener('click', (event) => {
+        const action = event.target.dataset?.action;
+        if (action && ACTIONS[action]) void ACTIONS[action](event.target);
       });
 
       // The parent GUI pings us after a scan finishes so the dashboard stays fresh.
       window.addEventListener('message', (event) => {
-        if (event.data?.type === 'ez-report-refresh') load().catch(() => {});
+        if (event.data?.type === 'ez-report-refresh') ACTIONS.refresh();
       });
 
-      window.addEventListener('DOMContentLoaded', () =>
-        load().catch((err) => showFallback(TEXT.noBundleTitle, String(err.message ?? err))),
-      );
-      // DOMContentLoaded may already have fired by the time this inline script runs.
-      if (document.readyState !== 'loading') load().catch(() => {});
+      // The bundle is a deferred script: it runs after this inline script.
+      // DOMContentLoaded fires once deferred scripts are done, so wait for it
+      // (otherwise the first render would report a missing renderer).
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => void ACTIONS.refresh());
+      else void ACTIONS.refresh();
     </script>
   </body>
 </html>

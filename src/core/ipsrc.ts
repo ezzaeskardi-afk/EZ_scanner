@@ -27,7 +27,7 @@ export const CLOUDFLARE_V4: string[] = [
   '131.0.72.0/22',
 ];
 
-export const CLOUDFLARE_V6: string[] = [
+const CLOUDFLARE_V6: string[] = [
   '2400:cb00::/32',
   '2606:4700::/32',
   '2803:f800::/32',
@@ -42,7 +42,7 @@ export const CLOUDFLARE_V6: string[] = [
  * blocks). Hit-rate is measurably lower than the official ranges, which is why
  * this file is opt-in (`--extended` / GUI switch) instead of being merged in.
  */
-export const EXTENDED_DEFAULT: string[] = [
+const EXTENDED_DEFAULT: string[] = [
   '162.159.192.0/24',
   '162.159.193.0/24',
   '162.159.195.0/24',
@@ -51,7 +51,7 @@ export const EXTENDED_DEFAULT: string[] = [
 let extraCache: string[] | null = null;
 
 /** Reads `src/core/data/extra-ranges.txt` (one CIDR per line, `#` comments ok). */
-export async function loadExtraRanges(): Promise<string[]> {
+async function loadExtraRanges(): Promise<string[]> {
   if (extraCache) return extraCache;
   try {
     const here = dirname(fileURLToPath(import.meta.url));
@@ -97,7 +97,7 @@ export function isIpv6(s: string): boolean {
   }
 }
 
-export function isIp(s: string): boolean {
+function isIp(s: string): boolean {
   return isIpv4(s) || isIpv6(s);
 }
 

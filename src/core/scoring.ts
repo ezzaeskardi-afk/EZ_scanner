@@ -95,7 +95,7 @@ export interface ScoreParts {
 
 const WEIGHTS = { latency: 0.5, reliability: 0.25, dpi: 0.1, http: 0.05, speed: 0.1 };
 
-export function scoreParts(result: IpResult, cfg: ScanConfig, bestMbps: number): ScoreParts {
+function scoreParts(result: IpResult, cfg: ScanConfig, bestMbps: number): ScoreParts {
   const reference = Math.max(cfg.maxLatencyMs, 100);
   const latency = clamp01((reference - result.medianLatency) / reference);
   const reliability = clamp01(1 - result.lossPct / 100) * clamp01(result.successes / Math.max(1, result.attempts) + 0.25);
@@ -168,10 +168,6 @@ export function finalizeAll(results: IpResult[], cfg: ScanConfig): IpResult[] {
   const bestMbps = results.reduce((acc, r) => Math.max(acc, r.downMbps || 0), 0);
   for (const r of results) finalize(r, cfg, bestMbps);
   return results;
-}
-
-export function isHealthy(result: IpResult, cfg: ScanConfig): boolean {
-  return finalize(result, cfg, result.downMbps).healthy;
 }
 
 export type SortKey = 'score' | 'latency' | 'loss' | 'down' | 'up' | 'ip' | 'first';

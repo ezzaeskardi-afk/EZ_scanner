@@ -66,16 +66,16 @@ export function toCsv(results: IpResult[]): string {
   return `\uFEFF${[head, ...rows].join('\r\n')}\r\n`;
 }
 
-export function toJson(results: IpResult[], extra: Record<string, unknown> = {}): string {
+function toJson(results: IpResult[], extra: Record<string, unknown> = {}): string {
   return JSON.stringify({ generatedAt: new Date().toISOString(), count: results.length, ...extra, results }, null, 2);
 }
 
-export function toNdjson(results: IpResult[]): string {
+function toNdjson(results: IpResult[]): string {
   return `${results.map((r) => JSON.stringify(r)).join('\n')}\n`;
 }
 
 /** `ip:port`, with IPv6 bracketed so the value can be pasted back in. */
-export function formatAddress(ip: string, port: number, withPort = true): string {
+function formatAddress(ip: string, port: number, withPort = true): string {
   if (isIpv6(ip)) return withPort ? `[${ip}]:${port}` : ip;
   return withPort ? `${ip}:${port}` : ip;
 }

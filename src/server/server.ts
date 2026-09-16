@@ -7,7 +7,8 @@
  */
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { gzipSync } from 'node:zlib';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildTargets } from '../core/ipsrc.ts';
@@ -19,7 +20,7 @@ import { applyPreset, type IpResult, type LogLine, type ScanConfig, type SourceS
 import { sanitizeConfig, sanitizeSource } from '../core/validate.ts';
 import { runDoctor } from './doctor.ts';
 
-const VERSION = '1.1.0';
+const VERSION = '1.1.1';
 const MAX_BODY = 32 * 1024 * 1024;
 
 export interface EzServerOptions {
@@ -144,22 +145,34 @@ export async function createEzServer(opts: EzServerOptions = {}): Promise<EzServ
     return JSON.parse(raw) as T;
   };
 
-  const serveStatic = async (res: http.ServerResponse, pathname: string, port: number): Promise<boolean> => {
+  const STATIC_TYPES: Record<string, string> = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.svg': 'image/svg+xml',
+    '.json': 'application/json; charset=utf-8',
+    '.ico': 'image/x-icon',
+    '.woff2': 'font/woff2',
+  };
+  const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.json', '.svg']);
+  // Below this size the gzip header costs more than it saves.
+  const COMPRESS_MIN_BYTES = 8 * 1024;
+  /** gzip results keyed by path, invalidated by size+mtime so edits show up immediately. */
+  const gzipCache = new Map<string, { key: string; body: Buffer }>();
+
+  const serveStatic = async (
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    pathname: string,
+    port: number,
+    versioned: boolean,
+  ): Promise<boolean> => {
     const rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
     const safe = normalize(rel).replace(/^(\.\.[/\\])+/, '');
     const file = join(guiDir, safe);
     if (!file.startsWith(guiDir)) return false;
-    const types: Record<string, string> = {
-      '.html': 'text/html; charset=utf-8',
-      '.js': 'text/javascript; charset=utf-8',
-      '.css': 'text/css; charset=utf-8',
-      '.svg': 'image/svg+xml',
-      '.json': 'application/json; charset=utf-8',
-      '.ico': 'image/x-icon',
-      '.woff2': 'font/woff2',
-    };
     try {
-      let body: Buffer | string = await readFile(file);
+      let body: Buffer = await readFile(file);
       const ext = extname(file);
       if (ext === '.html') {
         body = Buffer.from(
@@ -171,7 +184,26 @@ export async function createEzServer(opts: EzServerOptions = {}): Promise<EzServ
           'utf8',
         );
       }
-      res.writeHead(200, { 'Content-Type': types[ext] ?? 'application/octet-stream', 'Cache-Control': 'no-store' });
+      const headers: Record<string, string> = {
+        'Content-Type': STATIC_TYPES[ext] ?? 'application/octet-stream',
+        // A `?v=` query means the caller pinned a version, so it is safe to cache hard.
+        'Cache-Control': versioned ? 'public, max-age=604800, immutable' : 'no-store',
+      };
+      // The vendored OpenUI renderer is ~3.5 MB; gzip cuts it to roughly a quarter.
+      if (COMPRESSIBLE.has(ext) && body.length >= COMPRESS_MIN_BYTES && /\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''))) {
+        const info = await stat(file);
+        const key = `${info.size}:${info.mtimeMs}`;
+        let cached = gzipCache.get(file);
+        if (!cached || cached.key !== key) {
+          cached = { key, body: gzipSync(body) };
+          gzipCache.set(file, cached);
+        }
+        body = cached.body;
+        headers['Content-Encoding'] = 'gzip';
+        headers.Vary = 'Accept-Encoding';
+      }
+      headers['Content-Length'] = String(body.length);
+      res.writeHead(200, headers);
       res.end(body);
       return true;
     } catch {
@@ -206,7 +238,7 @@ export async function createEzServer(opts: EzServerOptions = {}): Promise<EzServ
 
       // --- static -----------------------------------------------------------
       if (req.method === 'GET' && !pathname.startsWith('/api/')) {
-        if (await serveStatic(res, pathname, port)) return;
+        if (await serveStatic(req, res, pathname, port, url.searchParams.has('v'))) return;
         json(res, 404, { ok: false, error: 'not found' });
         return;
       }

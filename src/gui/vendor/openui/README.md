@@ -12,6 +12,9 @@ fully offline.
 | `LICENSE` | OpenUI repository root (MIT) |
 
 Both files are byte-identical copies; nothing in this directory is modified by hand.
+`report.html` requests them as `…/openui-bundle.min.js?v=0.1.4`, which the local server
+treats as a version pin and caches for a week (everything else is served `no-store`).
+Bumping the version here means bumping that query string too.
 
 ## Public API used
 

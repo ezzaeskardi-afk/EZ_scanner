@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.1.1 — 2026-09-16
+
+Cleanup and performance pass after the OpenUI work.
+
+### Removed (dead code)
+- `throttle()` (event emitter), `isHealthy()` (scoring) and `describeWarnings()`
+  (validation) were never called — deleted instead of documented.
+- 13 helpers that were exported but only used inside their own module no longer widen
+  the public surface (`toJson`, `toNdjson`, `formatAddress`, `isIp`, `isIpLiteral`,
+  `scoreParts`, `mapError`, `b64decode`, `healthTag`, `loadExtraRanges`, `BROWSER_UA`,
+  `CLOUDFLARE_V6`, `EXTENDED_DEFAULT`).
+- 10 unused design tokens and the unused `source-tabs` id; stale `.gitignore` entries
+  for files this project never creates.
+- `medianOf()` in the report builder duplicated `median()` from the scoring module.
+
+### Performance
+- The OpenUI renderer bundle (~3.5 MB) is no longer fetched on GUI startup: the report
+  is mounted on demand — when the dashboard scrolls into view *and* a scan has produced
+  data, when the user clicks it, or when a scan starts. Fresh installs never pay for it.
+- Static files are served gzip-compressed with a cached, mtime-invalidated buffer
+  (bundle 3.62 MB → 0.99 MB, own CSS 24 KB → 4 KB), and version-pinned assets
+  (`?v=`) are cached for a week.
+
+### Fixed
+- The footer summary now uses the server's totals instead of the (possibly truncated)
+  client-side list, so large scans are counted correctly.
+- `report.html` rendered once before the deferred renderer bundle had executed, which
+  made it fall back to "bundle did not load" on the first paint.
+
 ## 1.1.0 — 2026-09-16
 
 ### GUI — OpenUI dashboard

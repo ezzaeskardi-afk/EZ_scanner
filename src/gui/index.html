@@ -47,7 +47,7 @@
 
         <fieldset>
           <legend data-i18n="source.title">منبع آی‌پی</legend>
-          <div class="tabs" id="source-tabs">
+          <div class="tabs">
             <button class="tab active" data-kind="cloudflare" data-i18n="src.cf">کلادفلر</button>
             <button class="tab" data-kind="paste" data-i18n="src.paste">پیست لیست</button>
             <button class="tab" data-kind="file" data-i18n="src.file">فایل</button>
@@ -246,13 +246,16 @@
           این داشبورد از کد OpenUI Lang ساخته‌شده توسط همین اسکنر و با موتور رندر رسمی پروژه‌ی OpenUI
           (thesysdev/openui) کشیده می‌شود. همه‌ی فایل‌ها محلی‌اند (بدون CDN).
         </p>
-        <iframe
-          id="report-frame"
-          class="report-frame"
-          src="/report.html?embed=1"
-          title="OpenUI report"
-          loading="lazy"
-        ></iframe>
+        <!--
+          The renderer bundle is ~3.5 MB, so the report is only mounted once this
+          block scrolls into view (or the placeholder is clicked).
+        -->
+        <div class="report-mount" id="report-mount">
+          <iframe id="report-frame" class="report-frame" title="OpenUI report"></iframe>
+          <button id="btn-report-mount" class="report-overlay" data-i18n="report.mount">
+            نمایش داشبورد OpenUI
+          </button>
+        </div>
 
         <h2 class="section-gap" data-i18n="export.title">۵. خروجی و ترکیب با کانفیگ</h2>
         <div class="exports">

@@ -159,7 +159,3 @@ export function sanitizeSource(patch: Partial<SourceSpec>, base: SourceSpec = { 
   };
   return out;
 }
-
-export function describeWarnings(warnings: string[]): string[] {
-  return warnings.map((w) => `⚠ ${w}`);
-}

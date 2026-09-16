@@ -27,7 +27,7 @@ export interface ParseFailure {
   error: string;
 }
 
-export function b64decode(input: string): string {
+function b64decode(input: string): string {
   let s = input.trim().replace(/-/g, '+').replace(/_/g, '/');
   while (s.length % 4 !== 0) s += '=';
   return Buffer.from(s, 'base64').toString('utf8');
