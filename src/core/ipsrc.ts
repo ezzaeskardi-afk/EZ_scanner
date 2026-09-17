@@ -72,7 +72,7 @@ export interface Target {
   sni?: string;
 }
 
-export interface ParseResult {
+interface ParseResult {
   entries: Target[];
   errors: string[];
 }
@@ -180,7 +180,7 @@ export function bigToIpv6(v: bigint): string {
 
 /* --------------------------------- CIDR helpers -------------------------------- */
 
-export interface CidrInfo {
+interface CidrInfo {
   family: 4 | 6;
   base: bigint;
   bits: number;
@@ -290,7 +290,7 @@ function parseSingleTarget(token: string): Target | null {
 
 /* -------------------------------- target building ------------------------------ */
 
-export interface BuildResult {
+interface BuildResult {
   targets: string[];
   errors: string[];
   notes: string[];
@@ -303,7 +303,7 @@ const ENUMERATE_LIMIT = 4096;
 /** Hard ceiling so a pasted /8 cannot exhaust memory. */
 const MAX_TARGETS = 2_000_000;
 
-export interface BuildOptions {
+interface BuildOptions {
   /** Total address budget (0 = expand everything that is enumerable). */
   count: number;
   family: 4 | 6 | 0;

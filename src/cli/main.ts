@@ -19,7 +19,7 @@ import { createEzServer } from '../server/server.ts';
 import { runDoctor, runSelfTest } from '../server/doctor.ts';
 import { Output, RESULT_HEADERS, nextStepHints, printDoctor, resultRow } from './render.ts';
 
-const VERSION = '1.1.1';
+const VERSION = '1.3.0';
 
 /* ───────────────────────────── arg parsing ───────────────────────────── */
 
@@ -142,7 +142,11 @@ function buildConfig(args: Args): { config: ScanConfig; warnings: string[] } {
   set('minDelayMs', num(args, 'delay', DEFAULT_CONFIG.minDelayMs), args.values.has('delay'));
   set('adaptiveBackoff', false, args.flags.has('no-backoff'));
   set('autoPauseOnNetworkLoss', false, args.flags.has('no-autopause'));
-  set('canaryHost', (args.values.get('canary') ?? '').split(':')[0] || DEFAULT_CONFIG.canaryHost, args.values.has('canary'));
+  // `--canary host:port`: the port used to be dropped, so the watchdog always dialled 443.
+  const canary = args.values.get('canary') ?? '';
+  const [canaryHost, canaryPort] = canary.split(':');
+  set('canaryHost', canaryHost || DEFAULT_CONFIG.canaryHost, args.values.has('canary'));
+  set('canaryPort', Number(canaryPort) || DEFAULT_CONFIG.canaryPort, args.values.has('canary') && Boolean(canaryPort));
   set('family', num(args, 'family', DEFAULT_CONFIG.family), args.values.has('family'));
 
   const { config, warnings } = sanitizeConfig(patch, DEFAULT_CONFIG);

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fa" dir="rtl" data-lang="fa">
+<html lang="en" dir="ltr">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -15,10 +15,10 @@
       It is standalone so the parent GUI can iframe it: OpenUI's stylesheet owns
       the :root tokens here and cannot leak into the scanner UI.
 
-      Query parameters: lang=fa|en, theme=light|dark, top=<rows>, embed=1 (hides the toolbar).
+      Query parameters: theme=light|dark, top=<rows>, embed=1 (hides the toolbar).
     -->
     <!-- `?v=` pins the vendored bundle version, which lets the server cache these two files hard. -->
-    <link rel="stylesheet" href="/vendor/openui/openui-styles.css?v=0.1.4" />
+    <link rel="stylesheet" href="/vendor/openui/openui-styles.css?v=0.1.4-p47daa654" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <style>
       /*
@@ -60,9 +60,6 @@
       body {
         padding: var(--openui-space-m-l);
       }
-      html[dir='rtl'] body {
-        font-family: 'Vazirmatn', 'Segoe UI', Tahoma, var(--openui-font-body);
-      }
       .bar {
         display: flex;
         align-items: center;
@@ -74,9 +71,6 @@
         font: var(--openui-text-heading-xs);
         letter-spacing: var(--openui-text-heading-xs-letter-spacing);
         margin: 0 auto 0 0;
-      }
-      html[dir='rtl'] .bar h1 {
-        margin: 0 0 0 auto;
       }
       .bar button {
         font: var(--openui-text-label-sm);
@@ -128,7 +122,7 @@
   </head>
   <body>
     <div class="bar">
-      <h1 id="title">گزارش OpenUI</h1>
+      <h1 id="title">OpenUI report</h1>
       <span class="meta" id="meta"></span>
       <button data-action="refresh" type="button"></button>
       <button data-action="toggle" type="button"></button>
@@ -148,40 +142,22 @@
 
     <script>
       const params = new URLSearchParams(location.search);
-      const lang = params.get('lang') === 'en' ? 'en' : 'fa';
       const topN = Math.max(1, Math.min(200, Number(params.get('top') ?? 25) || 25));
       const theme = params.get('theme');
       if (theme === 'dark' || theme === 'light') document.documentElement.dataset.theme = theme;
 
-      document.documentElement.lang = lang;
-      document.documentElement.dir = lang === 'fa' ? 'rtl' : 'ltr';
-
       const TEXT = {
-        fa: {
-          title: 'گزارش OpenUI',
-          refresh: 'بازخوانی',
-          copy: 'کپی کد Lang',
-          download: 'دانلود کد Lang',
-          toggle: 'نمایش کد Lang',
-          copied: 'کپی شد',
-          empty: 'هنوز نتیجه‌ای برای نمایش نیست — یک اسکن اجرا کن.',
-          noBundleTitle: 'بسته‌ی OpenUI بارگذاری نشد',
-          noBundleBody:
-            'فایل‌های رندرر پیدا نشدند (src/gui/vendor/openui). کد OpenUI Lang همان پایین است؛ می‌توانی آن را در OpenUI Playground هم اجرا کنی.',
-        },
-        en: {
-          title: 'OpenUI report',
-          refresh: 'Refresh',
-          copy: 'Copy Lang code',
-          download: 'Download Lang code',
-          toggle: 'Show Lang code',
-          copied: 'Copied',
-          empty: 'No results to render yet — run a scan.',
-          noBundleTitle: 'OpenUI bundle did not load',
-          noBundleBody:
-            'The renderer assets are missing (src/gui/vendor/openui). The OpenUI Lang source is below — it also runs in the OpenUI Playground.',
-        },
-      }[lang];
+        title: 'OpenUI report',
+        refresh: 'Refresh',
+        copy: 'Copy Lang code',
+        download: 'Download Lang code',
+        toggle: 'Show Lang code',
+        copied: 'Copied',
+        empty: 'No results to render yet — run a scan.',
+        noBundleTitle: 'OpenUI bundle did not load',
+        noBundleBody:
+          'The renderer assets are missing (src/gui/vendor/openui). The OpenUI Lang source is below — it also runs in the OpenUI Playground.',
+      };
 
       document.getElementById('title').textContent = TEXT.title;
       if (params.get('embed') === '1') document.querySelector('.bar').classList.add('hidden');
@@ -239,7 +215,7 @@
 
       async function load() {
         fallbackEl.classList.add('hidden');
-        const res = await fetch(`/api/report/openui?lang=${lang}&top=${topN}`);
+        const res = await fetch(`/api/report/openui?top=${topN}`);
         const data = await res.json();
         if (!res.ok || !data.ok) throw new Error(data.error ?? `${res.status} ${res.statusText}`);
         code = data.code;

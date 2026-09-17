@@ -19,7 +19,7 @@ const CODES = {
   cyan: '\u001b[36m',
 };
 
-export interface OutputOptions {
+interface OutputOptions {
   color?: boolean;
   quiet?: boolean;
 }

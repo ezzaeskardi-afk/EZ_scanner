@@ -4,7 +4,7 @@
  * entries are perfectly legal and Excel/LibreOffice open them fine.
  */
 
-export interface ZipEntry {
+interface ZipEntry {
   name: string;
   data: Buffer | string;
 }

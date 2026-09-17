@@ -27,7 +27,7 @@ import {
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
 
-export interface ProbeTarget {
+interface ProbeTarget {
   ip: string;
   port: number;
   sni: string;
@@ -207,7 +207,7 @@ export async function probeOnce(
 
 /* ---------------------------------- throughput -------------------------------- */
 
-export interface SpeedResult {
+interface SpeedResult {
   ok: boolean;
   mbps: number;
   bytes: number;

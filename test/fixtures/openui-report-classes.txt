@@ -1,0 +1,159 @@
+# Classes the EZ Scanner OpenUI report actually renders.
+#
+# Captured by walking every element under #root of /report.html (a completed
+# 1200-address scan, 58 clean, FA + dark theme, `embed=1`) and collecting
+# classList, cross-checked against the DOM order: the report's
+# `root = Card([header, verdict, kpis, gates, chartHeader, chart, topHeader,
+# topTable, failsHeader, failsTable])` renders exactly these blocks, so no other
+# OpenUI component can appear in the report iframe.
+#
+# Blank lines and `#` comments are ignored. Consumed by
+# scripts/prune-openui-css.mjs --capture and test/openui-css.test.ts: every class
+# listed here must still have rules after the prune.
+#
+# Regenerate the capture with, in the report iframe:
+#   [...document.querySelectorAll('#root *')].flatMap(el => [...el.classList]).filter((c, i, a) => a.indexOf(c) === i).sort()
+
+# Card
+openui-card
+openui-card-card
+openui-card-full
+
+# CardHeader
+openui-header
+openui-header-bottom
+openui-header-top
+openui-header-top-left
+openui-header-top-right
+
+# Callout
+openui-callout
+openui-callout-description
+openui-callout-success
+openui-callout-title
+
+# InlineHeader
+openui-inline-header
+openui-inline-header-description
+openui-inline-header-heading
+
+# IconTag
+openui-icon-tag
+openui-icon-tag--info
+openui-icon-tag--l
+openui-icon-tag--neutral
+openui-icon-tag--success
+
+# IconText
+openui-icon-text
+openui-icon-text--horizontal
+openui-icon-text__content
+
+# BoldText / TextContent
+openui-text-block
+openui-text-block--align-left
+openui-text-block--highlight-text-number-subtext
+openui-text-block--size-xs
+openui-text-block--text-subtext
+openui-text-block--type-number
+openui-text-block__primary
+openui-text-block__secondary
+
+# SnippetCardBlock / SnippetCardItem
+openui-small-card-block
+openui-small-card-block__grid
+openui-small-card-block__grid--odd-count
+openui-small-card-block__grid--responsive
+openui-small-card-block__item
+openui-small-card-block__row
+openui-small-card-block__row--1
+openui-small-card-block__row--2
+openui-value-card
+openui-value-card--static
+openui-value-card__lhs
+openui-value-card__rhs
+openui-value-card__rhs-content
+
+# BarChart
+openui-bar-chart-condensed
+openui-bar-chart-condensed-container
+openui-bar-chart-condensed-container-inner
+openui-bar-chart-condensed-x-axis-label
+openui-bar-chart-condensed-y-axis-container
+openui-bar-chart-condensed-y-axis-label
+openui-chart-cartesian-grid
+openui-chart-container
+openui-chart-legend
+openui-chart-legend--bottom
+openui-chart-legend-container
+openui-chart-legend-item
+openui-chart-legend-item-indicator
+openui-chart-legend-item-label
+openui-chart-legend-item-label-container
+openui-chart-svg-x-axis-tick
+openui-chart-y-axis-tick
+
+# Table (the icon buttons come from its pagination)
+openui-icon-button
+openui-icon-button-icon
+openui-icon-button-secondary
+openui-icon-button-small
+openui-icon-button-square
+openui-scrollable-table-scroll-container
+openui-scrollable-table-wrapper
+openui-table
+openui-table-cell
+openui-table-container
+openui-table-head
+openui-table-head-content
+openui-table-head-label
+openui-table-row
+
+# TagBlock
+openui-tag
+openui-tag-block
+openui-tag-md
+openui-tag-neutral
+openui-tag-text
+
+# shared (every text node inside the cards above)
+openui-inline-markdown-renderer
+openui-markdown-renderer
+
+# recharts internals — kept by rule 1 above because they are not openui-namespaced
+recharts-cartesian-grid
+recharts-layer
+recharts-surface
+
+# JS-only hooks: class names OpenUI emits that carry no rules in this stylesheet,
+# so the prune neither keeps nor loses anything for them. Listed as documentation
+# of the real DOM surface; no rules are required to survive for these.
+#!hooks
+lucide
+lucide-activity
+lucide-chevron-left
+lucide-chevron-right
+lucide-radar
+lucide-shield-check
+lucide-timer
+lucide-zap
+openui-small-card-block--grid
+openui-small-card-block--value-card
+openui-table-body
+openui-table-header
+openui-text-block--type-text
+recharts-bar
+recharts-bar-rectangle
+recharts-bar-rectangles
+recharts-cartesian-axis
+recharts-cartesian-axis-tick
+recharts-cartesian-axis-tick-value
+recharts-cartesian-axis-ticks
+recharts-cartesian-grid-horizontal
+recharts-responsive-container
+recharts-tooltip-wrapper
+recharts-wrapper
+recharts-xAxis
+recharts-yAxis
+xAxis
+yAxis

@@ -1,5 +1,170 @@
 # Changelog
 
+## 1.3.0 — 2026-09-17
+
+**English-only.** The project ships in English, and the GUI still carried a whole FA/EN
+layer: two string tables, a language switch, Persian digits and dates, and a self-hosted
+Persian webfont. All of it is deleted rather than left half-wired, and two new gates keep it
+gone.
+
+### Removed (the FA half of the GUI)
+- `app.js`: the `EN` key table (static strings the markup asked for), the `RT.fa` runtime
+table, the `FA` DOM-scrape map, `initI18n()`, `setLang()` and the `lang` global. The English
+runtime table is now `T`, and `num()`/`share()`/`dec()` no longer branch on locale (no
+`fa-IR` digits, no Persian percent sign).
+- `index.html`: every `data-i18n`/`data-i18n-ph` attribute and the language button, so the
+markup carries its own English text; the document is now `lang="en" dir="ltr"`.
+- `core/openui.ts`: the Persian words table and the `language` input; `server.ts` no longer
+reads a `lang` query parameter, so the report builder emits one document.
+- `report.html`: its Persian text table, the `lang` parameter and the RTL font rules.
+- `src/gui/fonts/` (Vazirmatn, four weights plus its OFL licence) and the four `@font-face`
+blocks: an English-only UI renders with the platform font stack and ships zero font bytes.
+- The RTL-only rules (`:root[dir='rtl']`), including the mirrored progress gradient.
+
+### Changed
+- GUI font stack: `system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif`
+(was Vazirmatn plus Tahoma).
+- Version 1.3.0 in `package.json`, the CLI, the server and the report default.
+
+### Docs
+- `README.md` rewritten in English, `docs/USAGE.fa.md` replaced by `docs/USAGE.md`, and the
+Persian issue titles in `docs/ISSUES.md` translated (issue numbers and findings unchanged).
+
+### Added (gates, so it cannot rot back)
+- `test/gui.test.ts`: the GUI is English-only - no character from the Persian/Arabic script
+and no `data-i18n`, `dir="rtl"` or `lang="fa"` marker may appear in the four GUI files.
+- `test/deadcode.test.ts`: a project-wide sweep over `src/`, `test/`, `scripts/`, `docs/`,
+`README.md`, `CHANGELOG.md` and `package.json` fails the build on any non-English text.
+- The translation-parity gates (EN key coverage, FA/EN table parity) are gone with the
+tables they guarded; the runtime-string gate now walks the single `T` table.
+
+### Fixed (accounting and line-watchdog bugs, found in the full-project review)
+- **Resuming a session no longer restarts the counter at 0.** The probe phase kept its own
+counter, so a 90 %-done session reported 10 % done after a resume — and the progress bar,
+rate and ETA all followed it. The counter now continues from the snapshot.
+- **A stop neither fails nor consumes the addresses still in flight.** An aborted probe used
+to be recorded as a failure (poisoning `failuresByKind` and the snapshot) while its index
+stayed consumed, so a resume silently skipped those addresses. The cursor is now rewound to
+the earliest unfinished address.
+- The cursor can no longer run past the end of the target list (it overshot by up to
+`workers`, which is the same bug seen from the other side).
+- **`--canary host:port` now carries the port**, and a configured canary reaches the
+watchdog at all: it used to be frozen into the watchdog at construction time (so neither
+the flag nor the setting had any effect) and was *appended* to the three built-in canaries
+rather than replacing them — on a line that blocks 1.1.1.1/8.8.8.8/9.9.9.9, a healthy scan
+parked forever. `canaries` is now reported in the network state so a parked scan says which
+endpoints it is waiting for. The watchdog also checks once immediately on start instead of
+waiting a whole interval.
+- Sorting the results table by `up` actually sorts by upload speed (it silently fell back to
+score, with the aria-sort state claiming otherwise).
+- Removed three fields that promised data nobody could read: `handshakeMs` (a copy of
+`medianLatency` with a different name) and `ttfbMs` on results, and the `speedPending`
+counter that was set once and never cleared or shown.
+
+### Added
+- `test/ratelimit.test.ts` (4 tests) for the token bucket, the adaptive backoff and the
+canary rules, plus regression tests for the resume counter (`progress restarted at …`) and
+for a stop landing mid-probe.
+- **Automated releases.** `.github/workflows/release.yml` verifies the tag (typecheck, gates,
+tests), packages the tracked files with `git archive`, writes `SHA256SUMS.txt`, extracts the
+notes from `CHANGELOG.md` (`npm run notes -- 1.3.0`) and publishes the release. Every
+release before this one was assembled by hand.
+
+### Tests
+- 109 tests pass (100 before this review pass: 5 for the accounting/watchdog fixes and 4 for
+the release tooling). `npm run typecheck` is clean and `npm run check:deadcode` runs the
+non-English gate in CI.
+
+## 1.2.0 — 2026-09-16
+
+GUI rebuild. The old screen was a form, then a table, then some panels; it is now a
+single operations console with a fixed information order — setup rail, live console,
+results, dock.
+
+### Changed (visual system)
+- Design direction taken from the
+  [ui-ux-pro-max](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill) generator for
+  a *real-time operations dashboard* in the *Dark Mode (OLED)* style: its palette
+  (`#0F172A` background, `#1B2336` card, `#1E293B` primary, `#272F42` muted, `#22C55E`
+  accent, `#EF4444` destructive), a dense 8/12/16/32 scale and a single restrained
+  effect (a low-emission glow spent only on live status).
+- Persian type is now real type: **Vazirmatn** (SIL OFL) is self-hosted in
+  `src/gui/fonts/` with four weights — still no CDN, still works offline on a filtered
+  line. Latin stays on the system monospace stack, with tabular numerals everywhere a
+  number can change.
+- The whole shell is RTL-first with logical properties (`margin-inline`, `inset-inline`)
+  and mirrors correctly for `lang=en`; the light theme is kept (the generated style says
+  "light not recommended") because the tool also gets used on projectors, and both themes
+  are checked for 4.5:1 text contrast.
+- Icons are one SVG sprite (no emoji), every icon-only button carries a label and a
+  tooltip, the two tablists (`address source`, dock) support arrow keys with a roving
+  tabindex, focus rings are always visible, and `prefers-reduced-motion` disables motion.
+
+### Added (function, not paint)
+- **KPI strip** with checked/answered/no-answer/clean/rate/ETA plus per-share percentages —
+  the six numbers people were previously reconstructing from one long log line.
+- **Live / stale / disconnected indicator** driven by the actual SSE heartbeat, with a
+  tooltip saying when the last message arrived, and a **pause live updates** switch that
+  keeps collecting without repainting (buffered count shown).
+- **Localised rejection reasons**: the scoring module's machine strings
+  (`no successful attempt (timeout ×2)`, `loss 60% > 50%`, …) and the scanner's status
+  messages are now rendered in the UI language, with the raw string kept in the tooltip.
+- Lower **dock** with four tabs — live log, OpenUI dashboard, export & config, tools —
+  instead of six stacked panels, and a skeleton/empty state that distinguishes "nothing
+  found yet" from "your filter hides everything".
+
+### Changed (payload)
+- The vendored OpenUI stylesheet is **pruned to the components the report renders**
+  instead of shipped whole: 310.0 KB → 102.2 KB raw and 33.3 KB → 9.1 KB gzipped
+  (1837 → 448 selector rules, 32 of 37 keyframes dropped). Upstream ships one sheet for its whole
+  product — chat, agent pane, artifact browser, model switcher, accordions, date pickers —
+  none of which the report iframe can render, yet the browser parsed and indexed every one
+  of those rules. `scripts/prune-openui-css.ts` regenerates it from the pinned upstream
+  file; the rules it keeps are chosen by *class family* (`.openui-callout` keeps
+  `-warning`/`-danger`), element/`:root`/custom-property rules and every non-`openui-`
+  class (`.recharts-*`, `.lucide`) are kept unconditionally, source order is preserved
+  (so `@media` overrides still win), and the generated `PRUNE-REPORT.md` records the
+  before/after sizes and what was dropped.
+- `report.html`'s stylesheet `?v=` pin is now derived from the content hash
+  (`?v=0.1.4-p…`) and rewritten by the prune script. It used to stay `?v=0.1.4` while the
+  file changed, and because the server caches a pinned URL for a week, a browser that had
+  already loaded the unpruned file would keep serving it.
+
+### Fixed
+- The setup rail's sticky header was pinned inside the rail itself below 1180px, which
+  pushed it down by its own inset and left a ~48px dead gap at the top of the panel.
+- `#stat-line2` and the old status badge were replaced by the KPI strip and the state
+  pill; the footer summary and the progress tooltip now agree with the server totals.
+
+### Removed (dead export surface)
+- 29 exported types that no other file imported lost their `export` (they are still used
+  inside their own module): the option/result interfaces of `render`, `export`, `net`,
+  `ipsrc`, `probe`, `ratelimit`, `scanner`, `configparse`, `validate`, `zip`, `doctor`,
+  `openui`, `events` and `server`, plus `scoring.ScoreParts` and `types.SourceKind`.
+- Two runtime strings (`no`) that nothing rendered.
+
+### Tests
+- New `test/deadcode.test.ts` (3 tests) is the permanent version of the throwaway audit
+  scripts the 1.1.1 cleanup used: it fails when an exported symbol is used only inside
+  its own module, when a design token is defined but never read with `var()`, or when an
+  EN/RT translation key has no reader. A dedicated `npm run check:deadcode` step runs it
+  first in CI so the failure is obvious in the job list.
+- New `test/gui.test.ts` (12 tests) enforces the contract between the three build-free GUI
+  files: every id `app.js` selects exists in the markup, every source tab has exactly one
+  block, every icon reference resolves to a sprite symbol, every `data-i18n` and
+  placeholder key has an EN translation, the FA/EN runtime tables have identical keys,
+  every scanner phase, probe error kind, rejection reason and status message has a
+  translator, both themes theme the same colours, classes used in the markup exist in the
+  stylesheet, and no asset is loaded from a CDN.
+- New `test/openui-css.test.ts` (7 tests) keeps the prune honest: the committed stylesheet
+  must be *minimal* (a second run drops nothing, so a half-pruned file cannot pass),
+  *complete* (all 85 styled classes the report renders — captured from a real report DOM
+  into `test/fixtures/openui-report-classes.txt` — still have rules, and every component
+  `src/core/openui.ts` can emit across five scan scenarios is mapped to a class family, so
+  a new component cannot quietly lose its styling), *within its size budget*, and *fresh*
+  (the `?v=` pin matches the file). A dedicated `npm run check:openui-css` step runs it in
+  CI alongside `check:deadcode`.
+
 ## 1.1.1 — 2026-09-16
 
 Cleanup and performance pass after the OpenUI work.

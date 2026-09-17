@@ -9,7 +9,7 @@
 export type ProbeMode = 'tcp' | 'tls' | 'http';
 
 /** Where candidate addresses come from. */
-export type SourceKind = 'cloudflare' | 'paste' | 'file' | 'domains' | 'config';
+type SourceKind = 'cloudflare' | 'paste' | 'file' | 'domains' | 'config';
 
 export interface SourceSpec {
   kind: SourceKind;
@@ -131,8 +131,6 @@ export interface IpResult {
   medianLatency: number;
   bestLatency: number;
   jitter: number;
-  handshakeMs: number;
-  ttfbMs: number;
   httpStatus: number;
   wsOk: boolean | null;
   stable: boolean | null;
@@ -158,7 +156,6 @@ export interface ScanStats {
   ok: number;
   failed: number;
   healthy: number;
-  speedPending: number;
   startedAt: number;
   elapsedMs: number;
   /** addresses / second, measured over the last window */

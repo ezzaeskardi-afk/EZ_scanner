@@ -90,8 +90,14 @@ export class AdaptiveBackoff {
   }
 }
 
-export interface WatchdogOptions {
-  /** Extra canary in `host:port` form, tried alongside the built-in ones. */
+interface WatchdogOptions {
+  /**
+   * Canaries in `host:port` form. Read on every check, so a runtime
+   * `configure({canaryHost})` takes effect immediately instead of being frozen at
+   * construction time (which is how the setting used to be silently ignored).
+   */
+  canaries?: () => string[];
+  /** Extra canary in `host:port` form, resolved once. */
   canary?: string;
   intervalMs?: number;
   timeoutMs?: number;
@@ -106,9 +112,11 @@ export interface NetworkState {
   failures: number;
   lastCheckAt: number;
   message: string;
+  /** The canaries the last check actually used — shown so a blocked line is debuggable. */
+  canaries: string[];
 }
 
-export type WatchdogEvents = {
+type WatchdogEvents = {
   change: NetworkState;
 };
 
@@ -116,19 +124,26 @@ export type WatchdogEvents = {
 const DEFAULT_CANARIES = ['1.1.1.1:443', '8.8.8.8:53', '9.9.9.9:443'];
 
 export class NetworkWatchdog extends Emitter<WatchdogEvents> {
-  state: NetworkState = { offline: false, checks: 0, failures: 0, lastCheckAt: 0, message: 'ok' };
+  state: NetworkState = { offline: false, checks: 0, failures: 0, lastCheckAt: 0, message: 'ok', canaries: [] };
   private timer: NodeJS.Timeout | null = null;
   private running = false;
   private inFlight = false;
   private consecutiveFailures = 0;
-  private readonly canaries: string[];
   private readonly opts: WatchdogOptions;
 
   constructor(opts: WatchdogOptions = {}) {
     super();
     this.opts = opts;
-    const extra = opts.canary && !DEFAULT_CANARIES.includes(opts.canary) ? [opts.canary] : [];
-    this.canaries = [...extra, ...DEFAULT_CANARIES];
+  }
+
+  /**
+   * Operator-supplied canaries win outright: an Iranian line that blocks
+   * 1.1.1.1/8.8.8.8 would otherwise park a healthy scan forever, because "any canary
+   * answered = line is up" can never be satisfied.
+   */
+  get canaries(): string[] {
+    const custom = (this.opts.canaries?.() ?? (this.opts.canary ? [this.opts.canary] : [])).filter(Boolean);
+    return custom.length ? [...new Set(custom)] : DEFAULT_CANARIES;
   }
 
   get intervalMs(): number {
@@ -152,7 +167,9 @@ export class NetworkWatchdog extends Emitter<WatchdogEvents> {
       if (enabled && !this.inFlight) await this.check();
       this.timer = setTimeout(tick, this.intervalMs);
     };
-    this.timer = setTimeout(tick, this.intervalMs);
+    // Check once immediately: waiting a whole interval left the first seconds of a scan
+    // with no line state at all (and the GUI showing a stale "line: ok").
+    void tick();
   }
 
   stop(): void {
@@ -165,7 +182,8 @@ export class NetworkWatchdog extends Emitter<WatchdogEvents> {
   async check(): Promise<boolean> {
     this.inFlight = true;
     let anyOk = false;
-    for (const canary of this.canaries) {
+    const canaries = this.canaries;
+    for (const canary of canaries) {
       const [host, portStr] = canary.split(':');
       try {
         const conn = await tcpConnect(host, Number(portStr || 443), { timeoutMs: this.timeoutMs });
@@ -179,6 +197,7 @@ export class NetworkWatchdog extends Emitter<WatchdogEvents> {
     this.inFlight = false;
     this.state.checks += 1;
     this.state.lastCheckAt = Date.now();
+    this.state.canaries = canaries;
     if (anyOk) {
       this.consecutiveFailures = 0;
       this.state.failures = 0;
@@ -195,7 +214,7 @@ export class NetworkWatchdog extends Emitter<WatchdogEvents> {
         this.state = {
           ...this.state,
           offline: true,
-          message: `no route to any canary (${this.canaries.join(', ')}) — pausing scan`,
+          message: `no route to any canary (${canaries.join(', ')}) — pausing scan`,
         };
         this.emit('change', this.state);
       }

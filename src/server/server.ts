@@ -20,10 +20,10 @@ import { applyPreset, type IpResult, type LogLine, type ScanConfig, type SourceS
 import { sanitizeConfig, sanitizeSource } from '../core/validate.ts';
 import { runDoctor } from './doctor.ts';
 
-const VERSION = '1.1.1';
+const VERSION = '1.3.0';
 const MAX_BODY = 32 * 1024 * 1024;
 
-export interface EzServerOptions {
+interface EzServerOptions {
   scanner?: Scanner;
   host?: string;
   port?: number;
@@ -275,7 +275,6 @@ export async function createEzServer(opts: EzServerOptions = {}): Promise<EzServ
 
       // OpenUI Lang dashboard of the current scan (rendered by /report.html).
       if (pathname === '/api/report/openui' && req.method === 'GET') {
-        const language = url.searchParams.get('lang') === 'en' ? 'en' : 'fa';
         const report = buildOpenUiReport({
           stats: scanner.getStats(),
           config: scanner.config,
@@ -284,7 +283,6 @@ export async function createEzServer(opts: EzServerOptions = {}): Promise<EzServ
           results: scanner.getResults('score'),
           failures: scanner.getFailures().samples,
           version: VERSION,
-          language,
           topN: Number(url.searchParams.get('top') ?? 25) || 25,
         });
         if (url.searchParams.get('download') === '1') {

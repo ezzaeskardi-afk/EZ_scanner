@@ -12,7 +12,7 @@ import { defaultResolve } from '../core/ipsrc.ts';
 import { measureDownload, probeOnce } from '../core/probe.ts';
 import { tcpConnect, tlsConnect } from '../core/net.ts';
 
-export interface Check {
+interface Check {
   name: string;
   ok: boolean;
   detail: string;
@@ -144,7 +144,7 @@ export async function runDoctor(dataDir: string, sampleSni = 'www.cloudflare.com
   return { ok: failed.length === 0, checks, summary };
 }
 
-export interface SelfTestResult {
+interface SelfTestResult {
   probes: number;
   healthy: number;
   failures: Record<string, number>;

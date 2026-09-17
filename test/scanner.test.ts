@@ -126,7 +126,7 @@ test('pause then resume keeps the scan going', async () => {
 
 test('stop aborts a long scan and still writes a resumable snapshot', async () => {
   const scanner = makeScanner();
-  const targets = Array.from({ length: 300 }, (_v, i) => `10.0.${Math.floor(i / 250)}.${i % 250}:${edge.port}`);
+  const targets = Array.from({ length: 400 }, () => `127.0.0.1:${edge.port}`);
   const done = scanner.start({ targets, label: 'stop test' });
   await new Promise((resolve) => setTimeout(resolve, 60));
   await scanner.stop();
@@ -135,9 +135,27 @@ test('stop aborts a long scan and still writes a resumable snapshot', async () =
 
   const snapshot = JSON.parse(await readFile(join(dataDir, 'sessions', `${scanner.sessionId}.json`), 'utf8'));
   assert.equal(snapshot.version, 1);
-  assert.equal(snapshot.targets.length, 300);
-  assert.ok(snapshot.cursor > 0 && snapshot.cursor < 300, `cursor=${snapshot.cursor}`);
+  assert.equal(snapshot.targets.length, 400);
+  assert.ok(snapshot.cursor > 0 && snapshot.cursor < 400, `cursor=${snapshot.cursor}`);
   assert.equal(snapshot.stats.phase, 'stopped');
+});
+
+test('a stop mid-probe neither fails nor consumes the addresses still in flight', async () => {
+  const scanner = makeScanner();
+  // 10.0.0.0/8 is unroutable here, so nothing finishes before the stop: every worker is
+  // mid-probe when the abort lands (the case the old accounting got wrong).
+  const targets = Array.from({ length: 300 }, (_v, i) => `10.0.${Math.floor(i / 250)}.${i % 250}:${edge.port}`);
+  const done = scanner.start({ targets, label: 'inflight test' });
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  await scanner.stop();
+  await done;
+
+  // An aborted probe used to be recorded as a failure (poisoning the failure breakdown and
+  // the snapshot) while its index stayed consumed, so a resume skipped it for good.
+  assert.equal(scanner.getStats().failed, 0, 'aborted probes are not failures');
+  assert.deepEqual(scanner.getStats().failuresByKind, {}, 'an abort must not invent failure kinds');
+  const snapshot = await scanner.loadSnapshot(scanner.sessionId);
+  assert.equal(snapshot.cursor, 0, 'nothing was consumed, so a resume probes the whole list');
 });
 
 test('a session resumes from its cursor instead of starting over', async () => {
@@ -152,11 +170,23 @@ test('a session resumes from its cursor instead of starting over', async () => {
   assert.ok(snapshot.cursor > 0 && snapshot.cursor < targets.length, `cursor=${snapshot.cursor}`);
 
   const second = new Scanner(dataDir);
-  second.configure({ ...scanner.config, minDelayMs: 0 });
+  // Throttled hard enough that the resumed run can be sampled while it works.
+  second.configure({ ...scanner.config, minDelayMs: 0, rateLimitPerSec: 300, workers: 1 });
+  const seen: number[] = [];
+  const sampler = setInterval(() => seen.push(second.getStats().done), 2);
   await second.start({ resumeFrom: snapshot });
+  clearInterval(sampler);
+
   assert.equal(second.getState(), 'done');
   assert.equal(second.getStats().total, targets.length);
-  assert.equal(second.getStats().done, targets.length - snapshot.cursor, 'only the remaining addresses were probed');
+  assert.ok(seen.length > 0, 'the resumed run was sampled');
+  // The counter continues from the snapshot. It used to restart at 0, which reported a
+  // 90 %-done session as 10 % done — and the progress bar, rate and ETA all followed it.
+  assert.ok(
+    Math.min(...seen) >= snapshot.cursor,
+    `progress restarted at ${Math.min(...seen)} (cursor=${snapshot.cursor})`,
+  );
+  assert.equal(second.getStats().done, targets.length, 'every address is accounted for at the end');
   const sessions = await second.listSessions();
   assert.ok(sessions.some((s) => s.id === snapshot.id));
 });
@@ -179,4 +209,20 @@ test('network watchdog pauses nothing when disabled and reports state', async ()
   const network = scanner.getNetwork();
   assert.equal(network.offline, false);
   assert.ok(network.lastCheckAt >= 0);
+});
+
+test('a configured canary reaches the running watchdog', async () => {
+  const scanner = makeScanner();
+  // The canary used to be frozen into the watchdog at construction time, so neither the
+  // CLI flag nor the setting ever reached it.
+  scanner.configure({ canaryHost: '127.0.0.1', canaryPort: edge.port, autoPauseOnNetworkLoss: true });
+  const done = scanner.start({ targets: Array.from({ length: 60 }, () => `127.0.0.1:${edge.port}`), label: 'canary' });
+  for (let i = 0; i < 50 && scanner.getNetwork().checks === 0; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  const network = scanner.getNetwork();
+  assert.ok(network.checks > 0, 'the watchdog ran a check');
+  assert.deepEqual(network.canaries, [`127.0.0.1:${edge.port}`], 'the configured canary is the one being watched');
+  assert.equal(network.offline, false, 'the local canary answered');
+  await done;
 });

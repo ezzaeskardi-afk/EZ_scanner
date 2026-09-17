@@ -12,7 +12,7 @@ import { createZip } from './zip.ts';
 
 export type ExportFormat = 'json' | 'csv' | 'txt' | 'xlsx' | 'links' | 'hosts' | 'ndjson';
 
-export interface ExportOptions {
+interface ExportOptions {
   /** Template link used by the `links` format. */
   template?: string;
   /** Optional config object (kept separate from the template for label defaults). */
@@ -25,7 +25,7 @@ export interface ExportOptions {
   hidePort?: boolean;
 }
 
-export interface ExportPayload {
+interface ExportPayload {
   filename: string;
   contentType: string;
   body: string | Buffer;

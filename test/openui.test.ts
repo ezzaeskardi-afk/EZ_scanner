@@ -27,7 +27,6 @@ const stats = (over: Partial<ScanStats> = {}): ScanStats => ({
   ok: 0,
   failed: 0,
   healthy: 0,
-  speedPending: 0,
   startedAt: 0,
   elapsedMs: 0,
   rate: 0,
@@ -178,7 +177,6 @@ test('the throughput column appears once a speed test has run', () => {
     stats: stats({ total: 1, done: 1, ok: 1, healthy: 1 }),
     config: cfg,
     results: [measured],
-    language: 'en',
     generatedAt: 0,
   });
   const statements = assertWellFormed(report.code);
@@ -243,29 +241,18 @@ test('string payloads are escaped and never break the document', () => {
   assert.match(report.code, /FR\\"A\\\\B/);
 });
 
-test('the table honours the requested row cap and both languages', () => {
+test('the table honours the requested row cap', () => {
   const results = Array.from({ length: 40 }, (_, i) => healthyResult(`104.16.3.${i + 1}`, 100 + i));
-  const en = buildOpenUiReport({
+  const report = buildOpenUiReport({
     stats: stats({ total: 40, done: 40, healthy: 40 }),
     config: cfg,
     results,
     topN: 5,
-    language: 'en',
     generatedAt: 0,
   });
-  const fa = buildOpenUiReport({
-    stats: stats({ total: 40, done: 40, healthy: 40 }),
-    config: cfg,
-    results,
-    topN: 5,
-    language: 'fa',
-    generatedAt: 0,
-  });
-  assert.equal(en.counts.rows, 5);
-  assert.match(en.code, /Cleanest addresses/);
-  assert.match(fa.code, /تمیزترین آدرس‌ها/);
-  assertWellFormed(en.code);
-  assertWellFormed(fa.code);
+  assert.equal(report.counts.rows, 5);
+  assert.match(report.code, /Cleanest addresses/);
+  assertWellFormed(report.code);
 });
 
 test('the report is deterministic for the same input', () => {

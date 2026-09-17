@@ -11,7 +11,7 @@ class of problem impossible, **n/a** = does not apply to this implementation.
 
 ## "Nothing is green" family — the highest-impact group
 
-### #131 «عملا بدرد نمیخوره» / #66 «ipی پیدا نمیشه» / #102 «تست ای پی مشکل داره»
+### #131 "practically useless" / #66 "no IPs are found" / #102 "the IP test is broken"
 **Cause.** Three strict gates were on by default: WebSocket upgrade
 (`RequireWS`), a 1.5 s idle hold (`probeStability`) and "≥2 successful tries **and**
 loss < 50 %" — plus the speed-test path was called with `Tries: 1`, which can never
@@ -28,7 +28,7 @@ satisfy a "≥2 successes" rule, so every row printed `download sample failed`.
 - Every rejection carries a machine-readable reason (`loss 67% > 50%`,
   `WebSocket upgrade failed`, …) shown in the table tooltip, the CSV and the CLI.
 
-### #56 «پیدا نکردن ip برای مخابرات» / #58 «شاتل و ایرانسل» / #75 «گیر کردن اسکنر»
+### #56 "no IPs found on MCI" / #58 "Shatel and Irancell" / #75 "the scanner hangs"
 **Cause.** A dead address costs up to 3×4 requests with a 2 s dial timeout (~24–48 s)
 because the SNI fallback loop ran per attempt; with the GUI defaults (5 000 IPs,
 50 workers, 5 s timeout) the first green row could take half an hour. On throttled
@@ -49,7 +49,7 @@ lines the scan also looked frozen.
 
 ## Feature requests
 
-### #130 «ذخیره‌ی وضعیت اسکن ناتمام و ادامه‌ی آن» + #64 «stop و resume وسط اسکن»
+### #130 "save an unfinished scan and continue it" + #64 "stop and resume mid-scan"
 **EZ Scanner.** `core/scanner.ts` snapshots the whole session (config, ordered
 target list, cursor, results, failure samples, logs) to
 `~/.ez-scanner/sessions/<id>.json` every 15 s and on pause/stop/finish/abort. The
@@ -57,7 +57,7 @@ CLI resumes with `ezscan resume <id>` (optionally overriding config, e.g. adding
 `--speed`), the GUI has resume/download/delete/import-session controls. Tests:
 `test/scanner.test.ts → stop … resumable snapshot`, `… resumes from its cursor`.
 
-### #113 «ورود دامنه‌ها و رنج‌های دلخواه با کپی/پیست» + «شروع اسکن از فاز ۲»
+### #113 "paste custom domains and ranges" + "start the scan at phase 2"
 **EZ Scanner.**
 - Sources: official Cloudflare ranges, pasted text, a file picker (read in the
   browser, no path juggling), domain lists, and the domain of your own config link.
@@ -67,7 +67,7 @@ CLI resumes with `ezscan resume <id>` (optionally overriding config, e.g. adding
 - "Scan only these" re-runs a scan on the selected/bulk rows, so a second phase on
   your own list is one click (CLI: `--source paste --targets my-ips.txt`).
 
-### #110 «ترکیب آی‌پی‌ها با کانفیگ» + #106 «اکسل/CSV» + #44/#90 «کپی در پوتی/ترموکس»
+### #110 "combine IPs with a config" + #106 "Excel/CSV" + #44/#90 "copy in PuTTY/Termux"
 **EZ Scanner.** Paste your link once, then:
 - **Copy configs** → one ready-to-import link per address, labelled
   `EZ-<ip>-<latency>ms-<mbps>M`;
@@ -78,7 +78,7 @@ CLI resumes with `ezscan resume <id>` (optionally overriding config, e.g. adding
   needed (this is the #44/#90 complaint).
 `test/export.test.ts`, `test/configparse.test.ts`.
 
-### #97 «sni» (and BPB `FAKE_SNI` / `CONNECT_IP` workflows)
+### #97 "sni" (and BPB `FAKE_SNI` / `CONNECT_IP` workflows)
 **EZ Scanner.** A first-class SNI field, an SNI rotation pool (one SNI per attempt
 — useful when a specific hostname is throttled), automatic extraction from
 `vless://`, `trojan://`, `vmess://`, `ss://` and Xray/sing-box JSON, and a
@@ -92,16 +92,16 @@ with the config builder.
 guard) plus a dependency-free RTL/LTR HTML UI. No WebView2 runtime, no
 `cmd/gui` that has to compile.
 
-### #129 «go install کار نمی‌کند» / #114 «how to run with linux?» / #111 «32-bit»
+### #129 "go install does not work" / #114 "how to run on linux?" / #111 "32-bit"
 **EZ Scanner** is a Node program: `npm install -g .` or `git clone && npm start`.
 Same code path on Windows, Linux, macOS, 32/64-bit and Termux. No bootstrap
 problem, no `http2.TrailerPrefix` style build break, no per-architecture binary.
 
-### #126 «crash on Android», #39-style WebView issues
+### #126 "crash on Android", #39-style WebView issues
 **n/a** — the UI is a web page; if a browser opens the URL, the app runs. Nothing
 to crash in a WebView or an APK.
 
-### #51 «linux cli colour/colour-blind» — accessibility
+### #51 "linux cli colour / colour-blind" — accessibility
 **EZ Scanner** never encodes state in colour alone: CLI rows carry
 `[OK]`/`[--]`/`[!!]`, the log lines carry `ok`/`**`/`!!`, colour is optional
 (`--no-color`, `NO_COLOR`, non-TTY) and the GUI is a normal accessible document
@@ -111,7 +111,7 @@ with labels for every field.
 
 ## Anti-detection / line stability
 
-### #25 «قطعی هنگام اسکن» / #62 «شناسایی اسکن توسط مخابرات» / #96 «قطع شدن کانکشن بعد از اسکن»
+### #25 "the line drops while scanning" / #62 "the operator detects the scan" / #96 "the connection dies after a scan"
 **Cause.** A burst of thousands of parallel TLS handshakes from one line is a
 textbook scan signature; the operator (or an ISP-level DPI) reacts by dropping the
 line until the router restarts.
@@ -125,12 +125,12 @@ line until the router restarts.
    link, and resumes automatically when it comes back (`core/ratelimit.ts`,
    surfaced in the GUI as the "line: DOWN" banner).
 
-### #48 «ریسک فیلتر شدن کانفیگ در ترکیب با اسکنر»
+### #48 "risk of the config getting filtered when used together with the scanner"
 **EZ Scanner** detects `sni == config domain` and warns before the scan starts,
 suggests a generic SNI, and keeps the "scan with SNI X, inject into config Y"
 workflow as the default route so a personal domain is never the scan target.
 
-### #82 «تست دانلود همه را فیل می‌کند»
+### #82 "the download test fails every address"
 **Cause (found by reading the code):** the desktop speed-test call passed
 `Tries: 1` while the health check required ≥2 successes — 100 % failure by
 construction.
@@ -141,7 +141,7 @@ verified against real edges), measures Mbps from the first byte, and never lets 
 missing speed number alone reject an address (`test/scoring.test.ts → speed only
 re-weights addresses that were actually measured`).
 
-### #107 «Code audit» (15 findings, e.g. old Pillow API in `gen_icons.py`)
+### #107 "Code audit" (15 findings, e.g. the old Pillow API in `gen_icons.py`)
 **n/a / addressed by design.** There is no Python tooling and no version-pinned
 image API here; the only generated binary artifact is the XLSX, whose CRC32/ZIP
 writer is unit-tested (`test/export.test.ts`).
@@ -152,7 +152,7 @@ writer is unit-tested (`test/export.test.ts`).
 
 | Issue | What EZ Scanner does |
 |---|---|
-| #93/#73 «no documentation / manual» | `README.md`, `docs/ISSUES.md`, `docs/USAGE.fa.md`, `--help` for every command, and a quick-help panel inside the GUI |
-| #70 «BPB note» | The config builder turns discovered addresses into ready BPB/v2ray links; scanning a BPB fronting domain works through the "config" source |
-| #86/#86-like «which IP is best?» | Score (0–100) mixing latency, loss, DPI survival, HTTP validity and throughput + sortable columns |
-| «is it my line or the tool?» | `ezscan doctor` (DNS/TCP/TLS/HTTP/speed checks with hints) and `ezscan selftest` (probes real edges and prints a verdict) |
+| #93/#73 "no documentation / manual" | `README.md`, `docs/USAGE.md`, `docs/ISSUES.md`, `--help` for every command, and a quick-help panel inside the GUI |
+| #70 "BPB note" | The config builder turns discovered addresses into ready BPB/v2ray links; scanning a BPB fronting domain works through the "config" source |
+| #86/#86-like "which IP is best?" | Score (0–100) mixing latency, loss, DPI survival, HTTP validity and throughput + sortable columns |
+| "is it my line or the tool?" | `ezscan doctor` (DNS/TCP/TLS/HTTP/speed checks with hints) and `ezscan selftest` (probes real edges and prints a verdict) |

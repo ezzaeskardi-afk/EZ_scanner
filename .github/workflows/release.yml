@@ -1,0 +1,62 @@
+name: Release
+
+# Releases used to be assembled by hand: the zip was built on a laptop and the notes were
+# typed into the GitHub form, so nothing tied a release to the commit it described. Pushing
+# a `v*` tag now does the whole thing: verify, package the tracked files, publish.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)publish
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: verify, package and publish
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # A release is the one artifact users download, so the tag has to pass the same gate
+      # as `main` before anything is published.
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run check:deadcode
+      - run: npm test
+        timeout-minutes: 5
+
+      - name: Package the tracked files
+        run: |
+          VERSION="${TAG#v}"
+          git archive --format=zip --prefix=ez-scanner/ -o "ez-scanner-${VERSION}.zip" HEAD
+          sha256sum "ez-scanner-${VERSION}.zip" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Notes from the changelog
+        run: |
+          npm run --silent notes -- "${TAG#v}" > notes.md
+          head -5 notes.md
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${TAG#v}"
+          gh release create "$TAG" \
+            --title "EZ Scanner $VERSION" \
+            --notes-file notes.md \
+            "ez-scanner-${VERSION}.zip" SHA256SUMS.txt \
+          || gh release upload "$TAG" "ez-scanner-${VERSION}.zip" SHA256SUMS.txt --clobber
+          gh release view "$TAG" --json tagName,isDraft,url --jq '.tagName + " " + (.isDraft|tostring) + " " + .url'

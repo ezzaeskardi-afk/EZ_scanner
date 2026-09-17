@@ -7,7 +7,7 @@
  */
 import { DEFAULT_CONFIG, type ProbeMode, type ScanConfig, type SourceSpec } from './types.ts';
 
-export interface SanitizeResult {
+interface SanitizeResult {
   config: ScanConfig;
   warnings: string[];
 }

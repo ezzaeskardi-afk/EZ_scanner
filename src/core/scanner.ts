@@ -38,7 +38,7 @@ import {
 
 export type ScannerState = 'idle' | 'expanding' | 'running' | 'paused' | 'offline' | 'stopping' | 'done' | 'stopped';
 
-export interface ScannerEvents {
+interface ScannerEvents {
   progress: ScanStats;
   result: IpResult;
   log: LogLine;
@@ -48,7 +48,7 @@ export interface ScannerEvents {
   done: { stats: ScanStats; results: IpResult[] };
 }
 
-export interface StartOptions {
+interface StartOptions {
   resumeFrom?: SessionSnapshot;
   /** Applied on top of the snapshot config when resuming. */
   configOverride?: Partial<ScanConfig>;
@@ -67,7 +67,6 @@ function initialStats(): ScanStats {
     ok: 0,
     failed: 0,
     healthy: 0,
-    speedPending: 0,
     startedAt: 0,
     elapsedMs: 0,
     rate: 0,
@@ -120,7 +119,9 @@ export class Scanner extends Emitter<ScannerEvents> {
     this.dataDir = dataDir;
     this.bucket = new TokenBucket(this.config.rateLimitPerSec);
     this.watchdog = new NetworkWatchdog({
-      canary: `${this.config.canaryHost}:${this.config.canaryPort}`,
+      // Read through a getter, so `configure({canaryHost})` from the GUI/CLI actually
+      // reaches the watchdog (a constructor-time snapshot silently ignored it).
+      canaries: () => this.canaryList(),
       enabled: () => this.running && this.config.autoPauseOnNetworkLoss,
     });
     this.watchdog.on('change', (state) => {
@@ -129,6 +130,11 @@ export class Scanner extends Emitter<ScannerEvents> {
       this.emit('network', { offline: state.offline, message: state.message });
       this.emit('state', { state: this.getState(), stats: this.stats });
     });
+  }
+
+  /** Canaries for the line watchdog: the operator's own endpoint wins, else the defaults. */
+  private canaryList(): string[] {
+    return this.config.canaryHost ? [`${this.config.canaryHost}:${this.config.canaryPort}`] : [];
   }
 
   /* --------------------------------- state ---------------------------------- */
@@ -366,7 +372,11 @@ export class Scanner extends Emitter<ScannerEvents> {
   private async probePhase(): Promise<void> {
     const total = this.targets.length;
     const workers = Math.max(1, Math.min(this.config.workers, Math.max(1, total)));
-    let completed = 0;
+    // A resumed session continues its counter where the snapshot left it, so progress
+    // never drops back to 0 the moment the next address is probed.
+    let completed = Math.min(this.stats.done, total);
+    /** Addresses a worker has taken but not finished — rewound if the scan is stopped. */
+    const inflight = new Set<number>();
 
     const worker = async (): Promise<void> => {
       for (;;) {
@@ -381,8 +391,11 @@ export class Scanner extends Emitter<ScannerEvents> {
           this.stats.message = '';
           continue;
         }
+        // The cursor must not run past the end: overshooting it used to consume
+        // addresses that were never probed, so a resume skipped them.
+        if (this.cursor >= total) return;
         const index = this.cursor++;
-        if (index >= total) return;
+        inflight.add(index);
         const raw = this.targets[index];
         const { host: ip, port } = splitHostPort(raw, this.config.port);
         const key = resultKey(ip, port);
@@ -406,6 +419,11 @@ export class Scanner extends Emitter<ScannerEvents> {
           if (this.config.earlyExit && result.successes >= need) break;
         }
         this.stats.inflight -= 1;
+        // Stopped mid-probe with nothing to show: that is not a failure, and the address
+        // stays unconsumed (the cursor is rewound below) so a resume probes it again
+        // instead of recording a fake `aborted` failure and skipping it forever.
+        if (this.abort.signal.aborted && result.successes === 0) return;
+        inflight.delete(index);
         finalize(result, this.config);
         this.backoff.record(result.successes > 0);
 
@@ -451,13 +469,13 @@ export class Scanner extends Emitter<ScannerEvents> {
 
     this.log('info', `probing ${total} addresses with ${workers} workers (timeout ${this.config.timeoutMs}ms, tries ${this.config.tries})`);
     await Promise.all(Array.from({ length: workers }, () => worker()));
+    if (inflight.size) this.cursor = Math.min(this.cursor, Math.min(...inflight));
   }
 
   private async speedPhase(): Promise<void> {
     const healthy = sortResults([...this.results.values()].filter((r) => r.healthy), 'score');
     const limit = this.config.topN > 0 ? this.config.topN : healthy.length;
     const candidates = healthy.slice(0, Math.max(0, limit));
-    this.stats.speedPending = candidates.length;
     if (!candidates.length) {
       this.log('warn', 'no healthy address to speed-test');
       return;

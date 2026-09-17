@@ -8,7 +8,7 @@
 import net from 'node:net';
 import tls from 'node:tls';
 
-export interface ConnectOptions {
+interface ConnectOptions {
   timeoutMs: number;
   signal?: AbortSignal;
   localAddress?: string;
@@ -75,7 +75,7 @@ export function tcpConnect(host: string, port: number, opts: ConnectOptions): Pr
   });
 }
 
-export interface TlsConnectOptions extends ConnectOptions {
+interface TlsConnectOptions extends ConnectOptions {
   sni?: string;
   alpn?: string[];
   /** Skip certificate verification (default true — we are measuring reachability). */
@@ -129,7 +129,7 @@ function isIpLiteral(host: string): boolean {
   return /^\[.*\]$/.test(host);
 }
 
-export interface ReadResult {
+interface ReadResult {
   data: Buffer;
   ms: number;
   ended: boolean;
@@ -182,7 +182,7 @@ export function readUntil(
   });
 }
 
-export interface DrainResult {
+interface DrainResult {
   bytes: number;
   ms: number;
   firstByteMs: number;

@@ -20,7 +20,7 @@
 import { median } from './scoring.ts';
 import type { IpResult, ScanConfig, ScanStats, SourceSpec } from './types.ts';
 
-export interface OpenUiReportInput {
+interface OpenUiReportInput {
   stats: ScanStats;
   config: ScanConfig;
   results: IpResult[];
@@ -29,13 +29,12 @@ export interface OpenUiReportInput {
   source?: Partial<SourceSpec> & { kind?: string };
   state?: string;
   version?: string;
-  language?: 'fa' | 'en';
   /** Max rows in the cleanest-addresses table. */
   topN?: number;
   generatedAt?: number;
 }
 
-export interface OpenUiReportCounts {
+interface OpenUiReportCounts {
   addresses: number;
   reachable: number;
   healthy: number;
@@ -43,7 +42,7 @@ export interface OpenUiReportCounts {
   rows: number;
 }
 
-export interface OpenUiReport {
+interface OpenUiReport {
   /** The OpenUI Lang document. */
   code: string;
   counts: OpenUiReportCounts;
@@ -113,7 +112,8 @@ interface Words {
   idleNote: string;
 }
 
-const EN: Words = {
+/** The report is English-only: one words table, no locale indirection. */
+const WORDS: Words = {
   title: 'EZ Scanner — clean edge report',
   subtitle: (parts) => parts.filter(Boolean).join(' · '),
   checked: 'Checked',
@@ -159,52 +159,6 @@ const EN: Words = {
   idleNote: 'This report is generated from the last scan state — run a scan for real numbers.',
 };
 
-const FA: Words = {
-  title: 'EZ Scanner — گزارش لبه‌های تمیز',
-  subtitle: (parts) => parts.filter(Boolean).join(' · '),
-  checked: 'بررسی‌شده',
-  checkedSub: 'پروب‌های تمام‌شده',
-  clean: 'تمیز',
-  cleanSub: 'از همه‌ی گیت‌ها رد شده',
-  median: 'میانه',
-  medianSub: 'پینگ روی آدرس‌های تمیز',
-  best: 'بهترین',
-  bestSub: 'سریع‌ترین پروب',
-  download: 'دانلود',
-  downloadSub: 'بهترین سرعت اندازه‌گیری‌شده',
-  loss: 'افت',
-  lossSub: 'سهم پروب‌های ناموفق',
-  latency: 'پروفایل پینگ',
-  latencyHeader: 'پروفایل پینگ',
-  latencySub: 'هر سبد پینگ چند آدرس دارد',
-  tableHeader: 'تمیزترین آدرس‌ها',
-  tableSub: 'به ترتیب امتیاز — همین‌ها را در کلاینت بگذار',
-  colRank: '#',
-  colAddress: 'آدرس',
-  colLatency: 'پینگ',
-  colLoss: 'افت',
-  colScore: 'امتیاز',
-  colColo: 'لبه',
-  colDown: 'دانلود',
-  seriesName: 'آدرس‌ها',
-  failuresHeader: 'چرا آدرس‌ها حذف شدند',
-  failuresSub: 'پرتکرارترین علت خطا در نمونه',
-  colReason: 'علت',
-  colCount: 'تعداد',
-  gatesHeader: 'گیت‌های این اسکن',
-  verdictClean: 'اسکن آدرس تمیز پیدا کرد',
-  verdictCleanBody: (count, best) => `${count} آدرس از همه‌ی گیت‌ها رد شد. سریع‌ترین لبه‌ی سالم: ${best}.`,
-  verdictGated: 'همه‌ی آدرس‌ها را گیت‌ها رد کردند',
-  verdictGatedBody: (reasons) =>
-    `آدرس‌ها جواب دادند ولی گیت‌های سلامت ردشان کردند: ${reasons}. گیت‌ها را ساده‌تر کن (پریست «ملایم») یا سقف پینگ/افت را بالا ببر، بعد خط را متهم کن.`,
-  verdictDead: 'هیچ آدرسی جواب نداد',
-  verdictDeadBody: (reasons) =>
-    `هیچ آدرسی پروب را کامل نکرد: ${reasons}. این معمولاً یعنی پورت/SNI یا مسیر شبکه غلط است، نه اینکه کلادفلر خراب باشد.`,
-  verdictIdle: 'هنوز اسکنی انجام نشده',
-  verdictIdleBody: 'یک اسکن شروع کن؛ این گزارش زنده پر می‌شود.',
-  idleNote: 'این گزارش از آخرین وضعیت اسکن ساخته شده — برای عدد واقعی اسکن کن.',
-};
-
 function aggregate(items: IpResult[] | undefined, pick: (r: IpResult) => Record<string, number> | undefined): Array<[string, number]> {
   const counts = new Map<string, number>();
   for (const item of items ?? []) {
@@ -230,7 +184,7 @@ function humanKinds(entries: Array<[string, number]>, limit = 3): string {
  * callout, and any panel that would render empty is left out of the root Card.
  */
 export function buildOpenUiReport(input: OpenUiReportInput): OpenUiReport {
-  const L = input.language === 'en' ? EN : FA;
+  const L = WORDS;
   const results = input.results ?? [];
   const failures = input.failures ?? [];
   const healthy = results.filter((r) => r.healthy);
@@ -265,7 +219,7 @@ export function buildOpenUiReport(input: OpenUiReportInput): OpenUiReport {
     `${cfg.mode} :${cfg.port}`,
     input.source?.kind ?? '',
     input.state ?? '',
-    `v${input.version ?? '1.1.1'}`,
+    `v${input.version ?? '1.3.0'}`,
   ]);
 
   lines.push(`header = CardHeader(${q(L.title)}, ${q(subtitle)})`);

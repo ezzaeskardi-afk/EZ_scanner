@@ -24,8 +24,6 @@ export function createResult(ip: string, port: number, sni: string): IpResult {
     medianLatency: 0,
     bestLatency: 0,
     jitter: 0,
-    handshakeMs: 0,
-    ttfbMs: 0,
     httpStatus: 0,
     wsOk: null,
     stable: null,
@@ -57,9 +55,6 @@ export function recordAttempt(result: IpResult, attempt: ProbeAttempt): void {
   if (typeof attempt.wsOk === 'boolean') result.wsOk = attempt.wsOk;
   if (typeof attempt.stable === 'boolean') result.stable = attempt.stable;
   if (attempt.idleMs) result.stabilityMs = attempt.idleMs;
-  if (typeof attempt.latencyMs === 'number' && attempt.ok) {
-    result.ttfbMs = Math.round(attempt.latencyMs);
-  }
 }
 
 export function median(values: number[]): number {
@@ -85,7 +80,7 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
-export interface ScoreParts {
+interface ScoreParts {
   latency: number;
   reliability: number;
   dpi: number;
@@ -125,7 +120,6 @@ export function finalize(result: IpResult, cfg: ScanConfig, bestMbps = 0): IpRes
   result.medianLatency = median(result.latencies);
   result.bestLatency = result.latencies.length ? Math.min(...result.latencies) : 0;
   result.jitter = Math.round(stddev(result.latencies));
-  result.handshakeMs = result.medianLatency;
   result.lossPct = result.attempts ? Math.round((1 - result.successes / result.attempts) * 100) : 100;
 
   const parts = scoreParts(result, cfg, bestMbps);

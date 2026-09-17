@@ -92,9 +92,10 @@ test('the OpenUI report endpoint renders the current scan as OpenUI Lang', async
   assert.match(idle.code, /^root = Card\(\[/);
   assert.match(idle.code, /Callout\("neutral"/);
 
-  const english = (await fetch(`${base}/api/report/openui?lang=en&top=5`).then((r) => r.json())) as { code: string };
-  assert.ok(english.code.includes('EZ Scanner'));
-  assert.ok(!english.code.includes('گزارش'));
+  const capped = (await fetch(`${base}/api/report/openui?top=5`).then((r) => r.json())) as { code: string };
+  assert.ok(capped.code.includes('EZ Scanner'));
+  // The report is English-only: no Persian/Arabic script reaches the renderer.
+  assert.ok(!/[\u0600-\u06ff]/.test(capped.code), 'report must not carry non-English text');
 
   const download = await fetch(`${base}/api/report/openui?download=1`);
   assert.equal(download.status, 200);

@@ -1,333 +1,476 @@
 <!doctype html>
-<html lang="fa" dir="rtl">
+<html lang="en" dir="ltr" data-theme="dark">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>EZ Scanner — اسکنر آی‌پی تمیز</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>EZ Scanner — clean Cloudflare IP scanner</title>
     <link rel="stylesheet" href="/styles.css" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- Keeps the last chosen theme from flashing light before app.js runs. -->
+    <script>
+      try {
+        var t = localStorage.getItem('ez-theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <script>
       window.EZ = { token: '__EZ_TOKEN__', version: '__EZ_VERSION__', port: '__EZ_PORT__' };
     </script>
 
-    <header class="top">
+    <!-- ───────────────────────── icon sprite (no emoji, no CDN) ───────────────────────── -->
+    <svg class="sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" /></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14" /></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" /></symbol>
+      <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z" /><path d="M9 4v6h6V4M8 20v-6h8v6" /></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="m8.5 12.5 2.5 2.5 4.5-5" /></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4.5 21 20H3z" /><path d="M12 10v4.5M12 17.5h.01" /></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="m9.5 9.5 5 5M14.5 9.5l-5 5" /></symbol>
+      <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /></symbol>
+      <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h3.5L9 5l4 14 2.5-7H21" /></symbol>
+      <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4 18a8 8 0 1 1 16 0" /><path d="m12 14 4-4" /></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></symbol>
+      <symbol id="i-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="3.5" /><path d="M12 12 18 6" /></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" /></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9" /><path d="M20 4v4h-4" /></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5h10" /></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11" /><path d="m7.5 11 4.5 4.5 4.5-4.5" /><path d="M5 20h14" /></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V5" /><path d="m7.5 9.5 4.5-4.5 4.5 4.5" /><path d="M5 20h14" /></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 5h5v5" /><path d="M19 5l-6.5 6.5" /><path d="M18 14v5H5V6h5" /></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 13h8l1-13" /></symbol>
+      <symbol id="i-checks" viewBox="0 0 24 24"><path d="m3 12 3.5 3.5L13 9" /><path d="m11 15.5 1.5 1.5L21 8.5" /></symbol>
+      <symbol id="i-list" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" /></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2" /><path d="m7 10 3 2.5L7 15M12.5 15H17" /></symbol>
+      <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2" /><path d="M3 10h18M10 10v9.5" /></symbol>
+      <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M15.5 4a5 5 0 0 0-6 6.5L4 16v4h4l5.5-5.5A5 5 0 0 0 20 9l-3 3-2-2 3-3a5 5 0 0 0-2.5-3z" /></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4" /></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" /></symbol>
+      <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 4v8" /><path d="M7.5 7a7 7 0 1 0 9 0" /></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.5 19 6v6c0 4-3 7-7 8.5C8 19 5 16 5 12V6z" /></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13.5a4 4 0 0 0 5.7 0l3-3A4 4 0 0 0 13 4.8L11.5 6.3" /><path d="M14 10.5a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 19.2l1.5-1.5" /></symbol>
+    </svg>
+
+    <!-- ───────────────────────── app bar ───────────────────────── -->
+    <header class="appbar">
       <div class="brand">
-        <span class="logo">EZ</span>
-        <div>
+        <span class="logo" aria-hidden="true">EZ</span>
+        <div class="brand-text">
           <h1>EZ Scanner</h1>
-          <p class="muted small" data-i18n="tagline">پیدا کردن آی‌پی‌های تمیز کلادفلر با گیت‌های قابل تنظیم</p>
+          <p class="meta">Find clean Cloudflare IPs with configurable gates</p>
         </div>
       </div>
-      <div class="top-status">
-        <span class="badge" id="badge-state" data-i18n="state.idle">آماده</span>
-        <span class="badge" id="badge-network" data-i18n="net.unknown">وضعیت خط: نامعلوم</span>
-        <span class="badge ghost" id="badge-version">v__EZ_VERSION__</span>
-        <button class="ghost-btn" id="btn-theme" title="Dark / Light">تیره</button>
-        <button class="ghost-btn" id="btn-lang" title="English / فارسی">EN</button>
+      <div class="appbar-status">
+        <span class="pill" id="badge-state">idle</span>
+        <span class="pill" id="badge-network">line: unknown</span>
+        <span class="pill ghost" id="badge-version">v__EZ_VERSION__</span>
+        <button class="icon-btn" id="btn-theme" type="button" aria-label="Theme" title="Dark / Light">
+          <svg class="i" aria-hidden="true"><use href="#i-moon" /></svg>
+        </button>
       </div>
     </header>
 
-    <div id="offline-banner" class="banner hidden" data-i18n="net.offline">
-      اینترنت قطع شده — اسکن موقتاً متوقف شد و به‌طور خودکار ادامه می‌یابد.
-    </div>
+    <p class="banner hidden" id="offline-banner" role="status">
+      The internet dropped — the scan paused and will continue automatically.
+    </p>
 
-    <div class="layout">
-      <!-- ───────────────── setup ───────────────── -->
-      <aside class="panel setup">
-        <h2 data-i18n="setup.title">۱. تنظیمات اسکن</h2>
-
-        <div class="presets">
-          <button data-preset="fast" data-i18n="preset.fast">سریع</button>
-          <button data-preset="standard" data-i18n="preset.standard">متعادل</button>
-          <button data-preset="strict" data-i18n="preset.strict">سخت‌گیر</button>
-          <button data-preset="gentle" data-i18n="preset.gentle">ملایم (اینترنت ایران)</button>
+    <div class="workspace">
+      <!-- ───────────────────────── setup rail ───────────────────────── -->
+      <aside class="rail" aria-label="Scan setup">
+        <div class="rail-head">
+          <h2>Scan setup</h2>
+          <div class="presets" role="group" aria-label="Presets">
+            <button type="button" data-preset="fast">Fast</button>
+            <button type="button" data-preset="standard">Balanced</button>
+            <button type="button" data-preset="strict">Strict</button>
+            <button type="button" data-preset="gentle">Gentle (Iran-friendly)</button>
+          </div>
         </div>
 
-        <fieldset>
-          <legend data-i18n="source.title">منبع آی‌پی</legend>
-          <div class="tabs">
-            <button class="tab active" data-kind="cloudflare" data-i18n="src.cf">کلادفلر</button>
-            <button class="tab" data-kind="paste" data-i18n="src.paste">پیست لیست</button>
-            <button class="tab" data-kind="file" data-i18n="src.file">فایل</button>
-            <button class="tab" data-kind="domains" data-i18n="src.domains">دامنه‌ها</button>
-            <button class="tab" data-kind="config" data-i18n="src.config">کانفیگ</button>
-          </div>
-
-          <div id="src-cloudflare" class="src-block">
-            <label class="row">
-              <span data-i18n="src.count">تعداد آی‌پی</span>
-              <input type="number" id="cfg-limit" min="0" max="2000000" step="100" value="5000" />
-            </label>
-            <label class="row">
-              <span data-i18n="src.seed">Seed (تکرارپذیری)</span>
-              <input type="number" id="cfg-seed" value="1337" />
-            </label>
-            <label class="check">
-              <input type="checkbox" id="cfg-extended" />
-              <span data-i18n="src.extended">رنج‌های غیررسمی اضافه هم اسکن شود (نرخ موفقیت کمتر)</span>
-            </label>
-          </div>
-
-          <div id="src-paste" class="src-block hidden">
-            <textarea id="cfg-paste" rows="7" placeholder="1.2.3.4&#10;104.16.0.0/24&#10;1.2.3.0-1.2.3.255&#10;example.com:8443"></textarea>
-            <p class="muted small" data-i18n="src.pasteHint">هر خط: آی‌پی، رنج، CIDR، آی‌پی:پورت یا دامنه. خطوط # کامنت هستند.</p>
-          </div>
-
-          <div id="src-file" class="src-block hidden">
-            <input type="file" id="cfg-file" accept=".txt,.csv,.list,text/plain" />
-            <p class="muted small" id="file-info" data-i18n="src.fileHint">فایل متنی با آی‌پی/CIDR در هر خط (حداکثر ~۳۲ مگابایت).</p>
-          </div>
-
-          <div id="src-domains" class="src-block hidden">
-            <textarea id="cfg-domains" rows="5" placeholder="speed.cloudflare.com&#10;my-domain.example"></textarea>
-          </div>
-
-          <div id="src-config" class="src-block hidden">
-            <textarea id="cfg-link" rows="3" placeholder="vless://… یا trojan://… یا vmess://…"></textarea>
-            <div class="row gap">
-              <button id="btn-parse-config" data-i18n="src.parse">تحلیل کانفیگ</button>
-              <button id="btn-apply-config" class="ghost-btn" data-i18n="src.apply">استفاده از SNI/پورت آن</button>
-              <button id="btn-scan-config-domain" class="ghost-btn" data-i18n="src.scanDomain">اسکن دامنه‌ی کانفیگ</button>
+        <details class="fold" open>
+          <summary>Address source</summary>
+          <div class="fold-body">
+            <div class="tabs" role="tablist" aria-label="Address source">
+              <button class="tab active" type="button" role="tab" aria-selected="true" data-kind="cloudflare">Cloudflare</button>
+              <button class="tab" type="button" role="tab" aria-selected="false" data-kind="paste">Paste</button>
+              <button class="tab" type="button" role="tab" aria-selected="false" data-kind="file">File</button>
+              <button class="tab" type="button" role="tab" aria-selected="false" data-kind="domains">Domains</button>
+              <button class="tab" type="button" role="tab" aria-selected="false" data-kind="config">Config</button>
             </div>
-            <pre id="config-parse-out" class="out small"></pre>
-          </div>
 
-          <div class="row gap">
-            <button id="btn-preview" class="ghost-btn" data-i18n="src.preview">پیش‌نمایش تعداد</button>
-            <span class="muted small" id="preview-out"></span>
-          </div>
-        </fieldset>
+            <div id="src-cloudflare" class="src-block">
+              <label class="field"><span>Address count</span>
+                <input type="number" id="cfg-limit" min="0" max="2000000" step="100" value="5000" />
+              </label>
+              <label class="field"><span>Seed (reproducible)</span>
+                <input type="number" id="cfg-seed" value="1337" />
+              </label>
+              <label class="switch-row">
+                <input type="checkbox" id="cfg-extended" />
+                <span>Include non-official ranges (lower hit rate)</span>
+              </label>
+            </div>
 
-        <fieldset>
-          <legend data-i18n="probe.title">پروب</legend>
-          <div class="grid2">
-            <label class="row"><span data-i18n="probe.mode">حالت</span>
+            <div id="src-paste" class="src-block hidden">
+              <textarea id="cfg-paste" rows="6" placeholder="1.2.3.4&#10;104.16.0.0/24&#10;1.2.3.0-1.2.3.255&#10;example.com:8443"></textarea>
+              <p class="meta">One per line: IP, range, CIDR, IP:port or domain. # comments.</p>
+            </div>
+
+            <div id="src-file" class="src-block hidden">
+              <input type="file" id="cfg-file" accept=".txt,.csv,.list,text/plain" />
+              <p class="meta" id="file-info">Text file with IPs/CIDRs, one per line.</p>
+            </div>
+
+            <div id="src-domains" class="src-block hidden">
+              <textarea id="cfg-domains" rows="5" placeholder="speed.cloudflare.com&#10;my-domain.example"></textarea>
+            </div>
+
+            <div id="src-config" class="src-block hidden">
+              <textarea id="cfg-link" rows="3" placeholder="vless://… / trojan://… / vmess://…"></textarea>
+              <div class="row gap">
+                <button id="btn-parse-config" type="button">Parse config</button>
+                <button id="btn-apply-config" type="button" class="ghost-btn">Use its SNI/port</button>
+              </div>
+              <button id="btn-scan-config-domain" type="button" class="ghost-btn">Scan the config domain</button>
+              <pre id="config-parse-out" class="out"></pre>
+            </div>
+
+            <div class="row gap">
+              <button id="btn-preview" type="button" class="ghost-btn">Preview count</button>
+              <span class="meta" id="preview-out"></span>
+            </div>
+          </div>
+        </details>
+
+        <details class="fold">
+          <summary>Probe</summary>
+          <div class="fold-body grid2">
+            <label class="field"><span>Mode</span>
               <select id="cfg-mode">
-                <option value="tls">tls (دست‌دادن TLS)</option>
-                <option value="http">http (پاسخ HTTP)</option>
-                <option value="tcp">tcp (فقط اتصال)</option>
+                <option value="tls">tls</option>
+                <option value="http">http</option>
+                <option value="tcp">tcp</option>
               </select>
             </label>
-            <label class="row"><span data-i18n="probe.port">پورت</span><input type="number" id="cfg-port" min="1" max="65535" value="443" /></label>
-            <label class="row"><span data-i18n="probe.sni">SNI</span><input type="text" id="cfg-sni" placeholder="www.cloudflare.com" /></label>
-            <label class="row"><span data-i18n="probe.tries">تعداد تلاش</span><input type="number" id="cfg-tries" min="1" max="10" value="3" /></label>
-            <label class="row"><span data-i18n="probe.min">حداقل موفقیت</span><input type="number" id="cfg-min" min="1" max="10" value="2" /></label>
-            <label class="row"><span data-i18n="probe.timeout">تایم‌اوت (ms)</span><input type="number" id="cfg-timeout" min="500" max="30000" step="500" value="4000" /></label>
-            <label class="row"><span data-i18n="probe.workers">ورکر</span><input type="number" id="cfg-workers" min="1" max="1000" value="50" /></label>
-            <label class="row"><span data-i18n="probe.latency">حداکثر پینگ (ms)</span><input type="number" id="cfg-latency" min="50" max="20000" step="50" value="1800" /></label>
-            <label class="row"><span data-i18n="probe.loss">حداکثر افت (%)</span><input type="number" id="cfg-loss" min="0" max="100" value="50" /></label>
-            <label class="row"><span data-i18n="probe.minScore">حداقل امتیاز</span><input type="number" id="cfg-score" min="0" max="100" value="45" /></label>
-          </div>
-          <div class="row gap wrap">
-            <label class="check"><input type="checkbox" id="cfg-requireHttp" checked /><span data-i18n="probe.requireHttp">بررسی پاسخ HTTP</span></label>
-            <label class="check"><input type="checkbox" id="cfg-requireWs" /><span data-i18n="probe.requireWs">بررسی WebSocket (پیش‌فرض خاموش)</span></label>
-            <label class="check"><input type="checkbox" id="cfg-earlyExit" checked /><span data-i18n="probe.earlyExit">توقف زودتر پس از موفقیت</span></label>
-          </div>
-          <div class="grid2">
-            <label class="row"><span data-i18n="probe.httpPath">مسیر HTTP</span><input type="text" id="cfg-httpPath" value="/" /></label>
-            <label class="row"><span data-i18n="probe.wsPath">مسیر WS</span><input type="text" id="cfg-wsPath" value="/" /></label>
-            <label class="row"><span data-i18n="probe.stability">نگه‌داشتن بیکار (ms)</span><input type="number" id="cfg-stability" min="0" max="30000" step="100" value="0" /></label>
-            <label class="row"><span data-i18n="probe.family">خانواده</span>
-              <select id="cfg-family"><option value="4">IPv4</option><option value="6">IPv6</option><option value="0">هردو</option></select>
+            <label class="field"><span>Port</span><input type="number" id="cfg-port" min="1" max="65535" value="443" /></label>
+            <label class="field"><span>SNI</span><input type="text" id="cfg-sni" placeholder="www.cloudflare.com" /></label>
+            <label class="field"><span>Timeout (ms)</span><input type="number" id="cfg-timeout" min="500" max="30000" step="500" value="4000" /></label>
+            <label class="field"><span>Tries</span><input type="number" id="cfg-tries" min="1" max="10" value="3" /></label>
+            <label class="field"><span>Min successes</span><input type="number" id="cfg-min" min="1" max="10" value="2" /></label>
+            <label class="field"><span>Workers</span><input type="number" id="cfg-workers" min="1" max="1000" value="50" /></label>
+            <label class="field"><span>Max latency (ms)</span><input type="number" id="cfg-latency" min="50" max="20000" step="50" value="1800" /></label>
+            <label class="field"><span>Max loss (%)</span><input type="number" id="cfg-loss" min="0" max="100" value="50" /></label>
+            <label class="field"><span>Min score</span><input type="number" id="cfg-score" min="0" max="100" value="45" /></label>
+            <label class="field"><span>HTTP path</span><input type="text" id="cfg-httpPath" value="/" /></label>
+            <label class="field"><span>WS path</span><input type="text" id="cfg-wsPath" value="/" /></label>
+            <label class="field"><span>Idle hold (ms)</span><input type="number" id="cfg-stability" min="0" max="30000" step="100" value="0" /></label>
+            <label class="field"><span>Family</span>
+              <select id="cfg-family"><option value="4">IPv4</option><option value="6">IPv6</option><option value="0">Both</option></select>
             </label>
+            <label class="switch-row span2"><input type="checkbox" id="cfg-requireHttp" checked /><span>Validate HTTP response</span></label>
+            <label class="switch-row span2"><input type="checkbox" id="cfg-requireWs" /><span>Validate WebSocket (off by default)</span></label>
+            <label class="switch-row span2"><input type="checkbox" id="cfg-earlyExit" checked /><span>Stop early on success</span></label>
           </div>
-        </fieldset>
+        </details>
 
-        <fieldset>
-          <legend data-i18n="speed.title">تست سرعت</legend>
-          <div class="row gap wrap">
-            <label class="check"><input type="checkbox" id="cfg-measureSpeed" /><span data-i18n="speed.down">تست دانلود</span></label>
-            <label class="check"><input type="checkbox" id="cfg-measureUpload" /><span data-i18n="speed.up">تست آپلود</span></label>
+        <details class="fold">
+          <summary>Throughput</summary>
+          <div class="fold-body grid2">
+            <label class="switch-row span2"><input type="checkbox" id="cfg-measureSpeed" /><span>Download test</span></label>
+            <label class="switch-row span2"><input type="checkbox" id="cfg-measureUpload" /><span>Upload test</span></label>
+            <label class="field"><span>Download bytes</span><input type="number" id="cfg-speedBytes" min="100000" step="1000000" value="8000000" /></label>
+            <label class="field"><span>Top N</span><input type="number" id="cfg-topN" min="0" max="2000" value="20" /></label>
+            <label class="field"><span>Speed SNI</span><input type="text" id="cfg-speedSni" placeholder="(auto from the address)" /></label>
+            <label class="field"><span>Upload bytes</span><input type="number" id="cfg-uploadBytes" min="65536" step="500000" value="2000000" /></label>
+            <label class="field span2"><span>Download URL</span><input type="text" id="cfg-speedUrl" value="https://speed.cloudflare.com/__down?bytes=%BYTES%" /></label>
           </div>
-          <div class="grid2">
-            <label class="row"><span data-i18n="speed.bytes">حجم دانلود (بایت)</span><input type="number" id="cfg-speedBytes" min="100000" step="1000000" value="8000000" /></label>
-            <label class="row"><span data-i18n="speed.top">تعداد برتر</span><input type="number" id="cfg-topN" min="0" max="2000" value="20" /></label>
-            <label class="row"><span data-i18n="speed.sni">SNI سرعت</span><input type="text" id="cfg-speedSni" placeholder="(خودکار از آدرس)" /></label>
-            <label class="row"><span data-i18n="speed.bytesUp">حجم آپلود</span><input type="number" id="cfg-uploadBytes" min="65536" step="500000" value="2000000" /></label>
-          </div>
-          <label class="row"><span data-i18n="speed.url">آدرس دانلود</span><input type="text" id="cfg-speedUrl" value="https://speed.cloudflare.com/__down?bytes=%BYTES%" /></label>
-        </fieldset>
+        </details>
 
-        <fieldset>
-          <legend data-i18n="safe.title">ایمنی و ضد‌شناسایی</legend>
-          <div class="grid2">
-            <label class="row"><span data-i18n="safe.rate">سقف اتصال/ثانیه</span><input type="number" id="cfg-rate" min="0" max="5000" value="0" /></label>
-            <label class="row"><span data-i18n="safe.delay">تأخیر هر ورکر (ms)</span><input type="number" id="cfg-delay" min="0" max="10000" step="10" value="0" /></label>
+        <details class="fold">
+          <summary>Safety / anti-detection</summary>
+          <div class="fold-body grid2">
+            <label class="field"><span>Max connections/sec</span><input type="number" id="cfg-rate" min="0" max="5000" value="0" /></label>
+            <label class="field"><span>Per-worker delay (ms)</span><input type="number" id="cfg-delay" min="0" max="10000" step="10" value="0" /></label>
+            <label class="switch-row span2"><input type="checkbox" id="cfg-backoff" checked /><span>Adaptive slow-down on errors</span></label>
+            <label class="switch-row span2"><input type="checkbox" id="cfg-autopause" checked /><span>Auto-pause when the line dies</span></label>
+            <p class="meta span2">These keep the operator from killing the whole line (MCI, Shatel).</p>
           </div>
-          <div class="row gap wrap">
-            <label class="check"><input type="checkbox" id="cfg-backoff" checked /><span data-i18n="safe.backoff">کاهش سرعت خودکار در خطای زیاد</span></label>
-            <label class="check"><input type="checkbox" id="cfg-autopause" checked /><span data-i18n="safe.autopause">توقف خودکار وقتی اینترنت قطع شود</span></label>
-          </div>
-          <p class="muted small" data-i18n="safe.hint">این گزینه‌ها جلوی قطع‌شدن اینترنت توسط اپراتور را می‌گیرند (مخابرات/شاتل).</p>
-        </fieldset>
+        </details>
 
-        <div class="controls">
-          <button id="btn-start" class="primary" data-i18n="ctl.start">شروع اسکن</button>
-          <button id="btn-pause" data-i18n="ctl.pause">توقف موقت</button>
-          <button id="btn-resume" data-i18n="ctl.resume">ادامه</button>
-          <button id="btn-stop" class="danger" data-i18n="ctl.stop">توقف</button>
-          <button id="btn-save" class="ghost-btn" data-i18n="ctl.save">ذخیره نشست</button>
-        </div>
-        <p class="muted small" id="config-warnings"></p>
+        <p class="warn-note" id="config-warnings" role="status"></p>
       </aside>
 
-      <!-- ───────────────── progress + results ───────────────── -->
-      <main class="panel main">
-        <h2 data-i18n="progress.title">۲. پیشرفت</h2>
-        <div class="progress">
-          <div class="bar"><div class="fill" id="bar-main"></div></div>
-          <div class="stats" id="stat-line">—</div>
-          <div class="stats small muted" id="stat-line2"></div>
-        </div>
+      <!-- ───────────────────────── console ───────────────────────── -->
+      <main class="main">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Progress</h2>
+            <span class="spacer"></span>
+            <span class="live" id="live-pill">
+              <svg class="i" aria-hidden="true"><use href="#i-dot" /></svg>
+              <span id="live-text">idle</span>
+            </span>
+            <button class="ghost-btn small" id="btn-live-pause" type="button" aria-pressed="false">Pause live updates</button>
+          </div>
 
-        <div class="results-head">
-          <h2 data-i18n="results.title">۳. نتیجه‌ها</h2>
-          <div class="filters">
-            <label class="check"><input type="checkbox" id="filter-healthy" checked /><span data-i18n="res.healthyOnly">فقط سالم‌ها</span></label>
-            <input type="search" id="filter-text" placeholder="جست‌وجو (آی‌پی/colo)" data-i18n-ph="res.search" />
-            <select id="filter-sort">
-              <option value="score" data-i18n="res.sortScore">امتیاز</option>
-              <option value="latency" data-i18n="res.sortLatency">پینگ</option>
-              <option value="down" data-i18n="res.sortDown">سرعت دانلود</option>
-              <option value="loss" data-i18n="res.sortLoss">افت</option>
-              <option value="ip" data-i18n="res.sortIp">آی‌پی</option>
+          <div class="controls">
+            <button id="btn-start" type="button" class="primary">
+              <svg class="i" aria-hidden="true"><use href="#i-play" /></svg><span>Start scan</span>
+            </button>
+            <button id="btn-pause" type="button">
+              <svg class="i" aria-hidden="true"><use href="#i-pause" /></svg><span>Pause</span>
+            </button>
+            <button id="btn-resume" type="button">
+              <svg class="i" aria-hidden="true"><use href="#i-play" /></svg><span>Resume</span>
+            </button>
+            <button id="btn-stop" type="button" class="danger">
+              <svg class="i" aria-hidden="true"><use href="#i-stop" /></svg><span>Stop</span>
+            </button>
+            <button id="btn-save" type="button" class="ghost-btn">
+              <svg class="i" aria-hidden="true"><use href="#i-save" /></svg><span>Save session</span>
+            </button>
+          </div>
+
+          <div class="progress" role="group" aria-labelledby="progress-label">
+            <div class="bar" id="bar-main-wrap" role="progressbar" aria-labelledby="progress-label" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div class="fill" id="bar-main"></div>
+            </div>
+            <!-- The KPI strip below carries done/ok/failed/healthy/rate/eta, so this line
+                 stays on operational detail instead of repeating those numbers. -->
+            <p class="stats" id="stat-line" aria-live="polite">—</p>
+          </div>
+          <p class="sr-only" id="progress-label">Progress</p>
+
+          <div class="kpis">
+            <div class="kpi"><span class="kpi-label">Checked</span><strong class="kpi-value num" id="kpi-checked">0</strong><span class="kpi-sub num" id="kpi-total"></span></div>
+            <div class="kpi ok"><span class="kpi-label">Answered</span><strong class="kpi-value num" id="kpi-ok">0</strong><span class="kpi-sub num" id="kpi-ok-pct"></span></div>
+            <div class="kpi bad"><span class="kpi-label">No answer</span><strong class="kpi-value num" id="kpi-failed">0</strong><span class="kpi-sub num" id="kpi-fail-pct"></span></div>
+            <div class="kpi ok"><span class="kpi-label">Clean</span><strong class="kpi-value num" id="kpi-healthy">0</strong><span class="kpi-sub num" id="kpi-healthy-pct"></span></div>
+            <div class="kpi"><span class="kpi-label">Rate</span><strong class="kpi-value num" id="kpi-rate">0</strong><span class="kpi-sub">per second</span></div>
+            <div class="kpi"><span class="kpi-label">Time left</span><strong class="kpi-value num" id="kpi-eta">—</strong><span class="kpi-sub num" id="kpi-inflight"></span></div>
+          </div>
+
+          <div class="fail-strip">
+            <span class="meta">Failure reasons</span>
+            <span class="chips" id="fail-chips"></span>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Results</h2>
+            <span class="meta" id="results-note"></span>
+            <span class="spacer"></span>
+            <label class="switch-row inline"><input type="checkbox" id="filter-healthy" checked /><span>Healthy only</span></label>
+            <label class="search">
+              <svg class="i" aria-hidden="true"><use href="#i-search" /></svg>
+              <input type="search" id="filter-text" placeholder="search (ip/colo)" aria-label="search results" />
+            </label>
+            <select id="filter-sort" aria-label="sort results">
+              <option value="score">score</option>
+              <option value="latency">latency</option>
+              <option value="down">download</option>
+              <option value="loss">loss</option>
+              <option value="ip">ip</option>
             </select>
-            <button id="btn-refresh" class="ghost-btn" data-i18n="res.refresh">بازخوانی</button>
+            <button id="btn-refresh" type="button" class="ghost-btn small">
+              <svg class="i" aria-hidden="true"><use href="#i-refresh" /></svg><span>Reload</span>
+            </button>
           </div>
-        </div>
 
-        <div class="bulk">
-          <button id="btn-select-all" class="ghost-btn" data-i18n="bulk.all">انتخاب همه</button>
-          <button id="btn-select-none" class="ghost-btn" data-i18n="bulk.none">حذف انتخاب</button>
-          <span class="muted small" id="bulk-count"></span>
-          <span class="spacer"></span>
-          <button id="btn-copy-ip" data-i18n="bulk.copyIp">کپی ip:port</button>
-          <button id="btn-copy-json" data-i18n="bulk.copyJson">کپی JSON</button>
-          <button id="btn-retest-speed" data-i18n="bulk.retestSpeed">تست سرعت مجدد</button>
-          <button id="btn-retest-probe" data-i18n="bulk.retestProbe">پروب مجدد</button>
-          <button id="btn-rescan" class="accent" data-i18n="bulk.rescan">اسکن فقط همین‌ها</button>
-        </div>
-
-        <div class="table-wrap">
-          <table id="results-table">
-            <thead>
-              <tr>
-                <th class="c"><input type="checkbox" id="check-all" /></th>
-                <th data-sort="ip">IP</th>
-                <th>Port</th>
-                <th data-sort="latency" data-i18n="th.ping">پینگ</th>
-                <th data-sort="loss" data-i18n="th.loss">افت</th>
-                <th data-sort="down" data-i18n="th.down">دانلود</th>
-                <th data-sort="up" data-i18n="th.up">آپلود</th>
-                <th data-sort="score" data-i18n="th.score">امتیاز</th>
-                <th>HTTP</th>
-                <th>WS</th>
-                <th>Idle</th>
-                <th>Colo</th>
-                <th data-i18n="th.status">وضعیت</th>
-              </tr>
-            </thead>
-            <tbody id="results-body"></tbody>
-          </table>
-        </div>
-        <p class="muted small" id="results-note"></p>
-
-        <div class="report-head">
-          <h2 data-i18n="report.title">۴. داشبورد OpenUI</h2>
-          <span class="spacer"></span>
-          <button id="btn-report-refresh" data-i18n="report.refresh">بازخوانی گزارش</button>
-          <button id="btn-report-open" class="ghost-btn" data-i18n="report.open">تب جدید</button>
-          <button id="btn-report-copy" class="ghost-btn" data-i18n="report.copy">کپی کد Lang</button>
-          <button id="btn-report-download" class="ghost-btn" data-i18n="report.download">دانلود کد Lang</button>
-        </div>
-        <p class="muted small" data-i18n="report.hint">
-          این داشبورد از کد OpenUI Lang ساخته‌شده توسط همین اسکنر و با موتور رندر رسمی پروژه‌ی OpenUI
-          (thesysdev/openui) کشیده می‌شود. همه‌ی فایل‌ها محلی‌اند (بدون CDN).
-        </p>
-        <!--
-          The renderer bundle is ~3.5 MB, so the report is only mounted once this
-          block scrolls into view (or the placeholder is clicked).
-        -->
-        <div class="report-mount" id="report-mount">
-          <iframe id="report-frame" class="report-frame" title="OpenUI report"></iframe>
-          <button id="btn-report-mount" class="report-overlay" data-i18n="report.mount">
-            نمایش داشبورد OpenUI
-          </button>
-        </div>
-
-        <h2 class="section-gap" data-i18n="export.title">۵. خروجی و ترکیب با کانفیگ</h2>
-        <div class="exports">
-          <label class="row"><span data-i18n="export.template">لینک کانفیگ (برای ساخت خروجی)</span>
-            <input type="text" id="export-template" placeholder="vless://uuid@host:443?type=ws&security=tls&sni=…" />
-          </label>
-          <label class="row"><span data-i18n="export.prefix">پیشوند نام</span><input type="text" id="export-prefix" value="EZ" /></label>
-          <div class="row gap wrap">
-            <button id="btn-export-csv">CSV</button>
-            <button id="btn-export-xlsx">XLSX</button>
-            <button id="btn-export-json">JSON</button>
-            <button id="btn-export-txt">TXT (ip:port)</button>
-            <button id="btn-export-hosts" data-i18n="export.hosts">فقط آی‌پی‌ها</button>
-            <button id="btn-build-links" class="accent" data-i18n="export.build">ساخت کانفیگ‌ها</button>
-            <button id="btn-copy-links" class="ghost-btn" data-i18n="export.copyLinks">کپی کانفیگ‌ها</button>
-            <button id="btn-download-links" class="ghost-btn" data-i18n="export.downloadLinks">دانلود کانفیگ‌ها</button>
+          <div class="bulk">
+            <button id="btn-select-all" type="button" class="ghost-btn small">Select all</button>
+            <button id="btn-select-none" type="button" class="ghost-btn small">Clear selection</button>
+            <span class="meta" id="bulk-count"></span>
+            <span class="spacer"></span>
+            <button id="btn-copy-ip" type="button" class="small"><svg class="i" aria-hidden="true"><use href="#i-copy" /></svg>ip:port</button>
+            <button id="btn-copy-json" type="button" class="small"><svg class="i" aria-hidden="true"><use href="#i-copy" /></svg>JSON</button>
+            <button id="btn-retest-speed" type="button" class="small">Re-test speed</button>
+            <button id="btn-retest-probe" type="button" class="small">Re-probe</button>
+            <button id="btn-rescan" type="button" class="small accent">
+              <svg class="i" aria-hidden="true"><use href="#i-radar" /></svg><span>Scan only these</span>
+            </button>
           </div>
-          <p class="muted small" id="export-note"></p>
-        </div>
+
+          <div class="table-wrap">
+            <table id="results-table">
+              <thead>
+                <tr>
+                  <th class="c"><input type="checkbox" id="check-all" aria-label="select all rows" /></th>
+                  <th data-sort="ip">IP</th>
+                  <th>Port</th>
+                  <th data-sort="latency">latency</th>
+                  <th data-sort="loss">loss</th>
+                  <th data-sort="down">down</th>
+                  <th data-sort="up">up</th>
+                  <th data-sort="score">score</th>
+                  <th>HTTP</th>
+                  <th>WS</th>
+                  <th>Idle</th>
+                  <th>Colo</th>
+                  <th>status</th>
+                </tr>
+              </thead>
+              <tbody id="results-body"></tbody>
+            </table>
+            <div class="empty hidden" id="results-empty">
+              <svg class="i" aria-hidden="true"><use href="#i-radar" /></svg>
+              <p id="results-empty-text">No results yet — start a scan.</p>
+            </div>
+            <div class="empty hidden" id="results-loading" aria-busy="true">
+              <span class="spinner" aria-hidden="true"></span>
+              <p>Reading the current state…</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- ───────────────────────── lower dock ───────────────────────── -->
+        <section class="panel dock" id="dock">
+          <div class="dock-tabs" role="tablist" aria-label="Details">
+            <button class="dock-tab active" type="button" role="tab" aria-selected="true" data-dock="log">
+              <svg class="i" aria-hidden="true"><use href="#i-terminal" /></svg><span>Live log</span>
+            </button>
+            <button class="dock-tab" type="button" role="tab" aria-selected="false" data-dock="report">
+              <svg class="i" aria-hidden="true"><use href="#i-layout" /></svg><span>OpenUI dashboard</span>
+            </button>
+            <button class="dock-tab" type="button" role="tab" aria-selected="false" data-dock="export">
+              <svg class="i" aria-hidden="true"><use href="#i-link" /></svg><span>Export &amp; config</span>
+            </button>
+            <button class="dock-tab" type="button" role="tab" aria-selected="false" data-dock="tools">
+              <svg class="i" aria-hidden="true"><use href="#i-wrench" /></svg><span>Tools</span>
+            </button>
+          </div>
+
+          <!-- log -->
+          <div class="dock-panel" data-dock-panel="log" role="tabpanel">
+            <div class="row gap">
+              <select id="log-filter" aria-label="log filter">
+                <option value="all">all</option>
+                <option value="warn">warnings + errors</option>
+                <option value="error">errors only</option>
+              </select>
+              <button id="btn-clear-log" type="button" class="ghost-btn small">Clear</button>
+              <span class="spacer"></span>
+              <span class="meta" id="log-count"></span>
+            </div>
+            <div id="log" class="log" role="log" aria-live="off" tabindex="0"></div>
+          </div>
+
+          <!-- report -->
+          <div class="dock-panel hidden" data-dock-panel="report" role="tabpanel">
+            <div class="row gap wrap">
+              <button id="btn-report-refresh" type="button" class="small">
+                <svg class="i" aria-hidden="true"><use href="#i-refresh" /></svg><span>Refresh report</span>
+              </button>
+              <button id="btn-report-open" type="button" class="ghost-btn small">
+                <svg class="i" aria-hidden="true"><use href="#i-external" /></svg><span>New tab</span>
+              </button>
+              <button id="btn-report-copy" type="button" class="ghost-btn small">
+                <svg class="i" aria-hidden="true"><use href="#i-copy" /></svg><span>Copy Lang code</span>
+              </button>
+              <button id="btn-report-download" type="button" class="ghost-btn small">
+                <svg class="i" aria-hidden="true"><use href="#i-download" /></svg><span>Download Lang code</span>
+              </button>
+            </div>
+            <p class="meta">
+              This dashboard is built from OpenUI Lang generated by the scanner itself and rendered with the
+              official OpenUI renderer (thesysdev/openui). Everything is served locally — no CDN.
+            </p>
+            <!--
+              The renderer bundle is ~3.5 MB, so the report is only mounted once this
+              block is shown (dock tab opened / mount button clicked / scan has data).
+            -->
+            <div class="report-mount" id="report-mount">
+              <iframe id="report-frame" class="report-frame" title="OpenUI report"></iframe>
+              <button id="btn-report-mount" type="button" class="report-overlay">
+                <svg class="i" aria-hidden="true"><use href="#i-layout" /></svg><span>Show the OpenUI dashboard</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- export -->
+          <div class="dock-panel hidden" data-dock-panel="export" role="tabpanel">
+            <div class="grid2">
+              <label class="field"><span>Config link (for generated output)</span>
+                <input type="text" id="export-template" placeholder="vless://uuid@host:443?type=ws&security=tls&sni=…" />
+              </label>
+              <label class="field"><span>Name prefix</span><input type="text" id="export-prefix" value="EZ" /></label>
+            </div>
+            <div class="row gap wrap">
+              <span class="group-label">Files</span>
+              <button id="btn-export-csv" type="button" class="small">CSV</button>
+              <button id="btn-export-xlsx" type="button" class="small">XLSX</button>
+              <button id="btn-export-json" type="button" class="small">JSON</button>
+              <button id="btn-export-txt" type="button" class="small">TXT (ip:port)</button>
+              <button id="btn-export-hosts" type="button" class="small">IPs only</button>
+            </div>
+            <div class="row gap wrap">
+              <span class="group-label">Ready configs</span>
+              <button id="btn-build-links" type="button" class="small accent">
+                <svg class="i" aria-hidden="true"><use href="#i-link" /></svg><span>Build configs</span>
+              </button>
+              <button id="btn-copy-links" type="button" class="ghost-btn small">
+                <svg class="i" aria-hidden="true"><use href="#i-copy" /></svg><span>Copy configs</span>
+              </button>
+              <button id="btn-download-links" type="button" class="ghost-btn small">
+                <svg class="i" aria-hidden="true"><use href="#i-download" /></svg><span>Download configs</span>
+              </button>
+            </div>
+            <p class="meta" id="export-note"></p>
+          </div>
+
+          <!-- tools -->
+          <div class="dock-panel hidden" data-dock-panel="tools" role="tabpanel">
+            <div class="grid2">
+              <section>
+                <h3>Saved sessions</h3>
+                <ul id="session-list" class="session-list"></ul>
+                <div class="row gap wrap">
+                  <button id="btn-load-session" type="button" class="ghost-btn small">
+                    <svg class="i" aria-hidden="true"><use href="#i-play" /></svg><span>Load &amp; resume</span>
+                  </button>
+                  <label class="file-pick">
+                    <svg class="i" aria-hidden="true"><use href="#i-upload" /></svg>
+                    <span>Import session</span>
+                    <input type="file" id="session-file" accept=".json" />
+                  </label>
+                </div>
+              </section>
+
+              <section>
+                <h3>Line diagnostics</h3>
+                <button id="btn-doctor" type="button" class="ghost-btn small">
+                  <svg class="i" aria-hidden="true"><use href="#i-activity" /></svg><span>Run diagnostics</span>
+                </button>
+                <div id="doctor-out" class="out"></div>
+              </section>
+            </div>
+
+            <section>
+              <h3>Quick help</h3>
+              <ul class="help">
+                <li>No green result? Use the gentle preset and make sure WebSocket + idle hold are off.</li>
+                <li>The best SNI is the one from your own config — paste the link into the Config tab.</li>
+                <li>Real tunnel throughput differs: re-test the IPs inside your client.</li>
+                <li>Save the session to resume a long scan later.</li>
+              </ul>
+            </section>
+          </div>
+        </section>
       </main>
-
-      <!-- ───────────────── tools ───────────────── -->
-      <aside class="panel tools">
-        <h2 data-i18n="tools.title">۶. ابزارها</h2>
-
-        <section>
-          <h3 data-i18n="tools.sessions">نشست‌های ذخیره‌شده</h3>
-          <ul id="session-list" class="session-list"></ul>
-          <div class="row gap wrap">
-            <button id="btn-load-session" class="ghost-btn" data-i18n="tools.loadResume">انتخاب و ادامه</button>
-            <input type="file" id="session-file" accept=".json" />
-          </div>
-        </section>
-
-        <section>
-          <h3 data-i18n="tools.doctor">عیب‌یابی خط</h3>
-          <button id="btn-doctor" class="ghost-btn" data-i18n="tools.runDoctor">اجرای تست خط</button>
-          <div id="doctor-out" class="out small"></div>
-        </section>
-
-        <section>
-          <h3 data-i18n="tools.log">گزارش زنده</h3>
-          <div class="row gap">
-            <select id="log-filter">
-              <option value="all" data-i18n="log.all">همه</option>
-              <option value="warn" data-i18n="log.warn">هشدار و خطا</option>
-              <option value="error" data-i18n="log.error">فقط خطا</option>
-            </select>
-            <button id="btn-clear-log" class="ghost-btn" data-i18n="log.clear">پاک کردن</button>
-          </div>
-          <div id="log" class="log"></div>
-        </section>
-
-        <section>
-          <h3 data-i18n="tools.help">راهنمای سریع</h3>
-          <ul class="help small">
-            <li data-i18n="help.1">اگر هیچ آی‌پی سبزی نداشتی: پریست «ملایم» را بزن و مطمئن شو WebSocket و Idle خاموش است.</li>
-            <li data-i18n="help.2">بهترین SNI همان SNI کانفیگ خودت است؛ لینک را در تب «کانفیگ» پیست کن.</li>
-            <li data-i18n="help.3">برای دیدن سرعت واقعی کانفیگ، آی‌پی‌ها را در کلاینت خودت تست کن؛ اینجا مسیر مستقیم اندازه‌گیری می‌شود.</li>
-            <li data-i18n="help.4">اسکن طولانی را با «ذخیره نشست» ذخیره کن و بعداً «ادامه» بده.</li>
-          </ul>
-        </section>
-      </aside>
     </div>
 
-    <footer class="foot">
-      <span id="foot-summary" class="muted small"></span>
+    <footer class="appfoot">
+      <span class="meta" id="foot-summary"></span>
       <span class="spacer"></span>
-      <button id="btn-shutdown" class="ghost-btn small" data-i18n="foot.shutdown">بستن سرور</button>
+      <span class="meta" id="foot-hint">Everything stays local: no CDN, nothing leaves this machine.</span>
+      <button id="btn-shutdown" type="button" class="ghost-btn small">
+        <svg class="i" aria-hidden="true"><use href="#i-power" /></svg><span>Stop server</span>
+      </button>
     </footer>
 
-    <div id="toast" class="toast hidden"></div>
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
     <script src="/app.js" type="module"></script>
   </body>
 </html>

@@ -23,7 +23,7 @@ export interface ParsedConfig {
   warnings: string[];
 }
 
-export interface ParseFailure {
+interface ParseFailure {
   error: string;
 }
 

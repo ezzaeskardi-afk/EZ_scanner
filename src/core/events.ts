@@ -1,5 +1,5 @@
 /** Dependency-free, typed event emitter. */
-export type Listener<T> = (payload: T) => void;
+type Listener<T> = (payload: T) => void;
 
 export class Emitter<Events extends object> {
   private listeners = new Map<keyof Events, Set<Listener<never>>>();
