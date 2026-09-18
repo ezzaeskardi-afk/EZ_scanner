@@ -1,5 +1,62 @@
 # Changelog
 
+## 1.3.1 — 2026-09-19
+
+Review pass over the paths the suite exercised least — source expansion, share-link parsing
+and the line watchdog. Every fix below has a regression test.
+
+### Fixed
+- **A domain with a port was never resolved.** `my.host:8443` in a pasted list, a file or a
+  DNS source was pushed through as the literal target `my.host:8443`, which is neither a
+  hostname nor an `ip:port` pair, so every probe of it failed at DNS while the source
+  reported no error at all. The host is now resolved and the port re-attached (IPv6 answers
+  bracketed), and the resolver is handed the bare host.
+- **An explicit `count` could not protect a large source.** The address ceiling was applied
+  to the freshly built list, so a source that expanded past it (a file full of small CIDRs,
+  a multi-million-line paste) failed with "target list is too large" even when the user had
+  asked for `--count 5000`. The count is honoured first; the ceiling now judges the list that
+  is actually returned.
+- **One stray `%` in a link name made a whole config unparsable.** `decodeURIComponent` ran
+  outside any guard, so `vless://…#My%20node%` came back as `cannot parse vless link: URI
+  malformed` — the SNI, port and transport a scan needs were lost over a cosmetic label. The
+  fragment is now decoded leniently (well-formed escapes still decode exactly as before).
+- **`ezscan config` recommended a command that scanned a single address.** Its "scan with
+  these settings" line was `--source config … --count 3000`, but `--source config` only
+  expands the config's own server address, where a count is inert. It now recommends the
+  Cloudflare sweep with your SNI/port, and names the single-address mode as what it is.
+- **A new scan could inherit the previous line verdict.** The watchdog started every scan
+  with whatever the last one left behind, so a scan that ended while the line was down (or
+  any scan with the watchdog disabled, which never checks) showed a stale "line down" badge
+  that nothing corrected. `reset()` now runs at the start of a scan, and the first check —
+  which already runs immediately — decides the state again.
+- `canaryHost` can be cleared again: validation fell back to the previous host on an empty
+  value, so a custom canary could never be removed without restarting the process.
+- The unknown-preset error listed `gentle` twice and never mentioned the `iran` alias.
+
+### Removed
+- `AdaptiveBackoff.delayMs()` (nothing called it — the scanner computes its own delay) and
+  the unused `canary` watchdog option (superseded by `canaries`), plus a loop in the DNS path
+  that iterated over resolved addresses to do nothing with them.
+
+### Docs
+- `docs/USAGE.md`'s "three-click path" stopped after **Use its SNI/port**, which leaves the
+  Config *source* selected — a reader ended up scanning the one address inside their own
+  link. It now says to switch back to the Cloudflare tab, and spells out what the Config
+  source actually does. The GUI's quick help says the same, and the README's CLI examples
+  mark which command sweeps the ranges and which one probes the config's own address.
+
+### Added (gates, so the next release cannot drift)
+- `test/version.test.ts`: the version literal in `package.json`, the CLI, the GUI server and
+  the OpenUI report default must all agree, and each source must carry exactly one — the
+  bump is manual in four files, and a release that ships one stale is a release whose
+  `ezscan --version` disagrees with the GUI footer.
+- `test/cli.test.ts`: the CLI is spawned the way a user runs it — `--version`, an offline
+  `scan --dry-run`, the recommended `config` command and the preset error list.
+
+### Tests
+- 119 tests pass (109 before: 4 regression tests for the fixes above and 6 for the two new
+  gates). `npm run typecheck` is clean.
+
 ## 1.3.0 — 2026-09-17
 
 **English-only.** The project ships in English, and the GUI still carried a whole FA/EN

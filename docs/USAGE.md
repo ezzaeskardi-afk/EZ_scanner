@@ -35,8 +35,15 @@ Your browser opens by itself. If it does not, open the URL printed in the termin
 
 1. In **Address source**, click the **Config** tab and paste your own config link
    (`vless://…` or `trojan://…`).
-2. Click **Parse config**, then **Use its SNI/port**.
-3. Click **Start scan**.
+2. Click **Parse config**, then **Use its SNI/port** — the SNI, port and WS path are copied
+   into the settings on the right.
+3. Switch back to the **Cloudflare** tab (that is the clean-IP sweep: thousands of edges with
+   your SNI) and click **Start scan**.
+
+> The Config tab itself is a *source* like any other: with it selected, a scan resolves and
+> probes only the address inside your link (1–2 addresses). That is what the
+> **Scan the config domain** button does, and it answers "is my own server reachable?" — it
+> is not how you find clean IPs.
 
 When it finishes, the results table is populated. Read the *status* column:
 
@@ -124,7 +131,8 @@ Notes:
 
 ## 6. Scanning your own list (phase two)
 
-- **Paste** tab: one IP / CIDR / range / `ip:port` / domain per line.
+- **Paste** tab: one IP / CIDR / range / `ip:port` / domain per line. A domain can carry a
+  port too (`my.host:8443`): it is resolved like any other domain and the port is kept.
 - Or select rows in the results table and click **Scan only these** (to re-test throughput or
   to re-check them against stricter gates).
 

@@ -80,10 +80,6 @@ export class AdaptiveBackoff {
     else if (this.ratio < 0.25) this.factor = Math.max(1, this.factor / 1.3);
   }
 
-  delayMs(base: number): number {
-    return Math.round(base * (this.factor - 1) * 10);
-  }
-
   reset(): void {
     this.factor = 1;
     this.ratio = 0;
@@ -97,8 +93,6 @@ interface WatchdogOptions {
    * construction time (which is how the setting used to be silently ignored).
    */
   canaries?: () => string[];
-  /** Extra canary in `host:port` form, resolved once. */
-  canary?: string;
   intervalMs?: number;
   timeoutMs?: number;
   failureThreshold?: number;
@@ -142,7 +136,7 @@ export class NetworkWatchdog extends Emitter<WatchdogEvents> {
    * answered = line is up" can never be satisfied.
    */
   get canaries(): string[] {
-    const custom = (this.opts.canaries?.() ?? (this.opts.canary ? [this.opts.canary] : [])).filter(Boolean);
+    const custom = (this.opts.canaries?.() ?? []).filter(Boolean);
     return custom.length ? [...new Set(custom)] : DEFAULT_CANARIES;
   }
 
@@ -176,6 +170,16 @@ export class NetworkWatchdog extends Emitter<WatchdogEvents> {
     this.running = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+  }
+
+  /**
+   * Forgets the previous verdict. A new scan must not open with the last scan's
+   * "line is down" banner: nothing has been checked yet, and the first check (which
+   * runs immediately on `start()`) decides the state again.
+   */
+  reset(): void {
+    this.consecutiveFailures = 0;
+    this.state = { offline: false, checks: 0, failures: 0, lastCheckAt: 0, message: 'ok', canaries: [] };
   }
 
   /** Runs one round-trip check; returns true when at least one canary answered. */

@@ -110,7 +110,9 @@ export function sanitizeConfig(input: Partial<ScanConfig>, base: ScanConfig = DE
   if (patch.autoPauseOnNetworkLoss !== undefined) {
     merged.autoPauseOnNetworkLoss = bool(patch.autoPauseOnNetworkLoss, base.autoPauseOnNetworkLoss);
   }
-  if (patch.canaryHost !== undefined) merged.canaryHost = str(patch.canaryHost, base.canaryHost) || base.canaryHost;
+  // An explicitly empty value clears the custom canary and goes back to the built-in ones;
+  // `|| base.canaryHost` made a canary impossible to remove once it had been set.
+  if (patch.canaryHost !== undefined) merged.canaryHost = str(patch.canaryHost, base.canaryHost);
   if (patch.canaryPort !== undefined) merged.canaryPort = int(patch.canaryPort, base.canaryPort, 1, 65535);
   if (patch.minScore !== undefined) merged.minScore = int(patch.minScore, base.minScore, 0, 100);
 

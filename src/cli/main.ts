@@ -19,7 +19,7 @@ import { createEzServer } from '../server/server.ts';
 import { runDoctor, runSelfTest } from '../server/doctor.ts';
 import { Output, RESULT_HEADERS, nextStepHints, printDoctor, resultRow } from './render.ts';
 
-const VERSION = '1.3.0';
+const VERSION = '1.3.1';
 
 /* ───────────────────────────── arg parsing ───────────────────────────── */
 
@@ -105,7 +105,7 @@ function buildConfig(args: Args): { config: ScanConfig; warnings: string[] } {
   const presetName = args.values.get('preset');
   if (presetName) {
     const preset = applyPreset(presetName);
-    if (!preset) throw new Error(`unknown preset "${presetName}" (have: ${Object.keys(PRESETS).join(', ')}, gentle)`);
+    if (!preset) throw new Error(`unknown preset "${presetName}" (have: ${Object.keys(PRESETS).join(', ')}, iran)`);
     patch = { ...preset };
   }
 
@@ -428,9 +428,16 @@ async function cmdConfig(args: Args): Promise<number> {
   out.line(`address: ${parsed.address}   sni: ${parsed.sni || '(none)'}   port: ${parsed.port}`);
   for (const w of sniRiskWarnings(parsed)) out.line(out.paint('yellow', `⚠ ${w}`));
   out.line('');
+  // The recommended command sweeps the Cloudflare ranges *with* this config's SNI — that
+  // is the clean-IP workflow. It used to say `--source config … --count 3000`, which scans
+  // only the config's own address (the count is inert there), so the tip led nowhere.
+  const port = parsed.port === 443 ? '' : ` --port ${parsed.port}`;
+  const sni = parsed.sni ? ` --sni ${parsed.sni}` : '';
   out.line(out.paint('bold', 'scan with these settings:'));
-  out.line(`  ezscan scan --source config --config "${link.slice(0, 60)}…" --sni ${parsed.sni} --port ${parsed.port} --count 3000`);    out.line(out.paint('dim', 'tip: keep --no-ws (default) and, if the line is throttled, add --rate 12 --workers 20'));
-    out.line(out.paint('dim', 'scan your own list later with:  ezscan scan --source paste --targets found.txt --sni …'));
+  out.line(`  ezscan scan --count 3000${sni}${port}`);
+  out.line(out.paint('dim', `scan the config's own address instead:  ezscan scan --source config --config "${link.slice(0, 60)}…"`));
+  out.line(out.paint('dim', 'tip: keep --no-ws (default) and, if the line is throttled, add --rate 12 --workers 20'));
+  out.line(out.paint('dim', 'scan your own list later with:  ezscan scan --source paste --targets found.txt --sni …'));
   return 0;
 }
 

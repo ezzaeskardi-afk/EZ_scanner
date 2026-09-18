@@ -3,7 +3,7 @@
 **Find clean Cloudflare IPs for SNI-fronted tunnels — with a real GUI and a complete CLI.**
 Clean-IP discovery for Cloudflare fronted tunnels (vless / vmess / trojan / BPB style), with a local GUI, a scriptable CLI, resumable scans and honest diagnostics.
 
-[![tests](https://img.shields.io/badge/tests-109%20passing-brightgreen)](#tests)
+[![tests](https://img.shields.io/badge/tests-119%20passing-brightgreen)](#tests)
 [![node](https://img.shields.io/badge/node-%E2%89%A522.18-blue)](#install)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
@@ -120,7 +120,8 @@ Presets:
 ```bash
 ezscan gui                                     # the GUI
 ezscan scan --preset gentle --count 2000 --sni my.sni.example --csv out.csv
-ezscan scan --source config --config "vless://…" --speed --xlsx found.xlsx
+ezscan scan --source config --config "vless://…" --speed --xlsx found.xlsx  # the config's own address
+ezscan scan --count 3000 --sni my.sni.example --speed --xlsx found.xlsx      # the ranges, that SNI
 ezscan scan --source paste --targets my-ips.txt --csv out.csv   # probe phase only
 ezscan resume a1b2c3d4                         # continue a session
 ezscan sessions                                # list sessions
@@ -225,9 +226,9 @@ src/
   gui/       build-free UI (plain HTML/CSS/JS, English-only) + vendor/openui
   cli/       command line
 scripts/     maintenance tooling: OpenUI style pruning (no build step, gated in CI)
-test/        109 tests: probe against a local TLS server, stop/resume, snapshots, API and
-             security, exports, the OpenUI report, the HTML/CSS/JS contract, the dead-code
-             gate and the pruned-stylesheet gate
+test/        119 tests: probe against a local TLS server, stop/resume, snapshots, API and
+             security, exports, the OpenUI report, the HTML/CSS/JS contract, the CLI run as
+             a user runs it, the dead-code / version / pruned-stylesheet gates
 ```
 
 Design philosophy: **no runtime dependencies** (only devDependencies for type checking),
@@ -267,8 +268,8 @@ chart = BarChart(chartLabels, [chartSeries], "grouped", "latency bucket", "Addre
 
 ```bash
 npm run typecheck
-npm test                  # 109 tests: probe engine, gating, pause/resume, snapshots,
-                          # exports, HTTP API, OpenUI report, GUI contract, dead code
+npm test                  # 119 tests: probe engine, gating, pause/resume, snapshots,
+                          # exports, HTTP API, OpenUI report, GUI contract, CLI, dead code
 npm run check:openui-css  # the vendored OpenUI stylesheet is still minimal, complete and correctly pinned
 npm run check:deadcode    # CI gate: dead exports, unused CSS tokens, unused runtime strings, non-English text
 ```

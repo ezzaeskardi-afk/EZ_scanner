@@ -118,6 +118,51 @@ test('buildTargets: ranges, ports, family filter and domains', async () => {
   assert.match(failedDns.errors[0], /DNS failed/);
 });
 
+test('buildTargets: a domain with a port is resolved and keeps its port', async () => {
+  // `my.host:8443` used to be pushed through as the literal string "my.host:8443", which is
+  // not a hostname (and not an `ip:port` pair), so every probe of it failed at DNS with the
+  // source reporting no error at all.
+  const seen: string[] = [];
+  const v4 = await buildTargets(
+    { kind: 'paste', text: 'my.host:8443\nmy.host' },
+    {
+      count: 0,
+      family: 0,
+      resolve: async (host) => {
+        seen.push(host);
+        return ['203.0.113.7'];
+      },
+    },
+  );
+  assert.deepEqual(seen, ['my.host', 'my.host'], 'the resolver gets the bare host, not host:port');
+  assert.ok(v4.targets.includes('203.0.113.7:8443'), 'the port survives resolution');
+  assert.ok(v4.targets.includes('203.0.113.7'), 'the portless entry still works');
+  assert.equal(v4.resolved, 2);
+  assert.deepEqual(v4.errors, []);
+
+  const v6 = await buildTargets(
+    { kind: 'paste', text: 'my.host:2053' },
+    { count: 0, family: 0, resolve: async () => ['2606:4700::1111'] },
+  );
+  assert.deepEqual(v6.targets, ['[2606:4700::1111]:2053'], 'IPv6 answers are bracketed with their port');
+});
+
+test('buildTargets: an explicit count wins over the size ceiling', async () => {
+  // 200 /24s expand to 51 200 addresses. Asking for 40 must return 40 — the ceiling used
+  // to be applied to the freshly built list, so a big source failed outright with "target
+  // list is too large" and the requested count never got a chance to trim it.
+  const text = Array.from({ length: 200 }, (_, i) => `10.${Math.floor(i / 256)}.${i % 256}.0/24`).join('\n');
+  const trimmed = await buildTargets({ kind: 'paste', text }, { count: 40, family: 4, maxTargets: 10_000 });
+  assert.equal(trimmed.targets.length, 40);
+  assert.match(trimmed.notes.join(' '), /trimmed 51160 addresses to respect count=40/);
+
+  // Without a count there is nothing to trim to, so the ceiling still rejects the list.
+  await assert.rejects(
+    () => buildTargets({ kind: 'paste', text }, { count: 0, family: 4, maxTargets: 10_000 }),
+    /target list is too large \(51200 addresses\)/,
+  );
+});
+
 test('splitHostPort handles v4, v6 and plain hosts', () => {
   assert.deepEqual(splitHostPort('1.2.3.4:8443', 443), { host: '1.2.3.4', port: 8443 });
   assert.deepEqual(splitHostPort('[2606:4700::1]:2053', 443), { host: '2606:4700::1', port: 2053 });

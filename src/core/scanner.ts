@@ -222,6 +222,10 @@ export class Scanner extends Emitter<ScannerEvents> {
     this.label = opts.label ?? (this.label || `scan ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`);
     this.running = true;
     this.startTicker();
+    // Fresh scan, fresh line state: the previous scan's "offline" verdict must not
+    // survive into this one (it would show a line-down banner on a working line, and
+    // with the watchdog disabled it would never be corrected).
+    this.watchdog.reset();
     this.watchdog.start();
 
     try {

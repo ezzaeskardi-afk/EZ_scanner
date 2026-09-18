@@ -29,6 +29,24 @@ test('vless link keeps its transport details', () => {
   assert.match(describeConfig(parsed), /sni=cdn\.example\.com/);
 });
 
+test('a name that cannot be percent-decoded does not sink the whole link', () => {
+  // `decodeURIComponent` throws on a stray `%`, and it used to run outside any guard: the
+  // link came back as `cannot parse vless link: URI malformed`, so the SNI/port/transport
+  // the scan needs were lost over a cosmetic label.
+  const parsed = parseShareLink(
+    'vless://11111111-2222-3333-4444-555555555555@my.example.com:8443?security=tls&sni=cdn.example.com&type=ws#My%20node%',
+  );
+  assert.ok(isParsedConfig(parsed), 'the link still parses');
+  assert.equal(parsed.sni, 'cdn.example.com');
+  assert.equal(parsed.port, 8443);
+  assert.equal(parsed.network, 'ws');
+  assert.equal(parsed.name, 'My node%');
+
+  const plain = parseShareLink('vless://u@1.2.3.4:443?security=tls#plain%20name');
+  assert.ok(isParsedConfig(plain));
+  assert.equal(plain.name, 'plain name', 'a well-formed escape still decodes');
+});
+
 test('trojan link defaults to tls and port 443', () => {
   const parsed = parseShareLink('trojan://pass@front.example.org?security=tls&sni=front.example.org#T');
   assert.ok(isParsedConfig(parsed));

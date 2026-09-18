@@ -312,6 +312,17 @@ interface BuildOptions {
   perCidr?: number;
   /** Resolver for domain entries (injectable for tests). */
   resolve?: (host: string, family: 4 | 6 | 0) => Promise<string[]>;
+  /**
+   * Ceiling for the returned list (default `MAX_TARGETS`). Only the addresses that
+   * are actually returned count, so a `count` is never defeated by a huge source.
+   */
+  maxTargets?: number;
+}
+
+/** `ip` or `ip:port`, bracketing IPv6 so the value survives the whole pipeline. */
+function formatTarget(host: string, port?: number): string {
+  if (port === undefined) return host;
+  return isIpv6(host) ? `[${host}]:${port}` : `${host}:${port}`;
 }
 
 /**
@@ -324,12 +335,13 @@ export async function buildTargets(source: SourceSpec, opts: BuildOptions): Prom
   const rand = mulberry32(source.seed ?? opts.seed ?? 1337);
   const pools: { first: bigint; size: bigint; family: 4 | 6 }[] = [];
   const fixed: string[] = [];
-  const domains: string[] = [];
+  /** Domains still to resolve. A domain can carry a port (`host:8443`), which must not be lost. */
+  const domains: Array<{ host: string; port?: number }> = [];
   let rangeCount = 0;
 
-  const addEntry = (host: string, forceSample = false) => {
+  const addEntry = (host: string, forceSample = false, port?: number) => {
     if (isIp(host)) {
-      fixed.push(host);
+      fixed.push(formatTarget(host, port));
       return;
     }
     if (isCidr(host)) {
@@ -365,7 +377,7 @@ export async function buildTargets(source: SourceSpec, opts: BuildOptions): Prom
       }
       return;
     }
-    domains.push(host);
+    domains.push({ host, port });
   };
 
   if (source.kind === 'cloudflare') {
@@ -399,28 +411,26 @@ export async function buildTargets(source: SourceSpec, opts: BuildOptions): Prom
     const parsed = parseTargetText(text);
     errors.push(...parsed.errors);
     for (const e of parsed.entries) {
-      if (e.port !== undefined) {
-        fixed.push(isIpv6(e.host) ? `[${e.host}]:${e.port}` : `${e.host}:${e.port}`);
-      } else {
-        addEntry(e.host);
-      }
+      // An IP literal is already concrete; a domain still has to be resolved — with its
+      // port kept, otherwise `my.host:8443` was probed as a hostname called "my.host:8443".
+      if (isIp(e.host)) fixed.push(formatTarget(e.host, e.port));
+      else addEntry(e.host, false, e.port);
     }
   }
 
   let resolved = 0;
   if (domains.length) {
     const resolver = opts.resolve ?? defaultResolve;
-    const results = await Promise.all(domains.map((d) => resolver(d, opts.family).catch(() => [])));
+    const results = await Promise.all(domains.map((d) => resolver(d.host, opts.family).catch(() => [])));
     results.forEach((ips, i) => {
-      if (!ips.length) {
-        errors.push(`${domains[i]} (DNS failed)`);
+      const entry = domains[i];
+      const usable = ips.filter(isIp);
+      if (!usable.length) {
+        errors.push(`${entry.host} (DNS failed)`);
         return;
       }
       resolved++;
-      for (const ip of ips) {
-        if (!isIp(ip)) continue;
-      }
-      fixed.push(...ips.filter(isIp));
+      fixed.push(...usable.map((ip) => formatTarget(ip, entry.port)));
     });
   }
 
@@ -470,13 +480,16 @@ export async function buildTargets(source: SourceSpec, opts: BuildOptions): Prom
     seen.add(candidate);
     merged.push(candidate);
   }
-  if (merged.length > MAX_TARGETS) {
-    throw new Error(`target list is too large (${merged.length}); pass a smaller count or narrower ranges`);
-  }
   shuffleInPlace(merged, rand);
   const limited = budget > 0 ? merged.slice(0, budget) : merged;
   if (merged.length > limited.length) {
     notes.push(`trimmed ${merged.length - limited.length} addresses to respect count=${budget}`);
+  }
+  // The ceiling guards the list we return, not the one we built: a source that expands to
+  // millions of addresses still has to honour a `count` of 5000 instead of failing.
+  const ceiling = opts.maxTargets ?? MAX_TARGETS;
+  if (limited.length > ceiling) {
+    throw new Error(`target list is too large (${limited.length} addresses); pass a count or narrower ranges`);
   }
   return { targets: limited, errors, notes, ranges: rangeCount, resolved };
 }

@@ -41,6 +41,24 @@ test('without a configured canary the built-ins are used', () => {
   assert.deepEqual(new NetworkWatchdog({ canaries: () => [] }).canaries, DEFAULT_CANARIES);
 });
 
+test('reset() clears a stale line verdict so a new scan starts clean', async () => {
+  const watchdog = new NetworkWatchdog({ canaries: () => ['127.0.0.1:1'], failureThreshold: 2, timeoutMs: 400 });
+  await watchdog.check();
+  await watchdog.check();
+  assert.equal(watchdog.state.offline, true, 'two failed checks mean the line is down');
+
+  watchdog.reset();
+  assert.equal(watchdog.state.offline, false, 'a new scan must not inherit the old verdict');
+  assert.equal(watchdog.state.checks, 0);
+  assert.equal(watchdog.state.failures, 0);
+  assert.equal(watchdog.state.message, 'ok');
+
+  // The failure counter starts from scratch too: one failed check after the reset is not
+  // enough to re-flag the line (the old 2/2 would otherwise trip it again immediately).
+  assert.equal(await watchdog.check(), false);
+  assert.equal(watchdog.state.offline, false, 'the threshold counts from scratch, not from before the reset');
+});
+
 test('a configured canary replaces the built-ins and is re-read on every check', async () => {
   const listener = await startFakeTcp();
   try {

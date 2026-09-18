@@ -20,7 +20,7 @@ import { applyPreset, type IpResult, type LogLine, type ScanConfig, type SourceS
 import { sanitizeConfig, sanitizeSource } from '../core/validate.ts';
 import { runDoctor } from './doctor.ts';
 
-const VERSION = '1.3.0';
+const VERSION = '1.3.1';
 const MAX_BODY = 32 * 1024 * 1024;
 
 interface EzServerOptions {

@@ -37,6 +37,26 @@ export function b64encode(input: string): string {
   return Buffer.from(input, 'utf8').toString('base64').replace(/=+$/, '');
 }
 
+/**
+ * Percent-decodes a link fragment, but never at the cost of the whole config: a single
+ * stray `%` in the name ("My node %") used to make `decodeURIComponent` throw and the
+ * link unparsable — losing the SNI/port/transport the scan needs. The raw text is a
+ * perfectly good name when it cannot be decoded.
+ */
+function decodeFragment(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    // A stray `%` is a typo, not a reason to lose the name: escape the lone ones and try
+    // again, keeping the readable parts of the label.
+    try {
+      return decodeURIComponent(value.replace(/%(?![0-9a-fA-F]{2})/g, '%25'));
+    } catch {
+      return value;
+    }
+  }
+}
+
 export function isParsedConfig(value: ParsedConfig | ParseFailure): value is ParsedConfig {
   return !('error' in value);
 }
@@ -89,7 +109,7 @@ function parseUrlStyle(raw: string, scheme: string): ParsedConfig | ParseFailure
     path: params.get('path') ?? '/',
     security,
     network,
-    name: decodeURIComponent(url.hash.replace(/^#/, '')) || `${scheme}-${url.hostname}`,
+    name: decodeFragment(url.hash.replace(/^#/, '')) || `${scheme}-${url.hostname}`,
     raw,
     warnings,
   };
@@ -143,7 +163,7 @@ function parseShadowsocks(raw: string): ParsedConfig | ParseFailure {
     path: '',
     security: 'none',
     network: 'tcp',
-    name: decodeURIComponent(hash) || `ss-${m[2]}`,
+    name: decodeFragment(hash) || `ss-${m[2]}`,
     raw,
     warnings: ['shadowsocks has no TLS/SNI: Cloudflare-clean-IP technique does not apply'],
   };
