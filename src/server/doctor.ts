@@ -6,11 +6,12 @@
  */
 import { access, mkdir, writeFile, unlink } from 'node:fs/promises';
 import { constants } from 'node:fs';
+import net from 'node:net';
 import { resolve } from 'node:path';
 import { DEFAULT_CONFIG } from '../core/types.ts';
 import { defaultResolve } from '../core/ipsrc.ts';
 import { measureDownload, probeOnce } from '../core/probe.ts';
-import { tcpConnect, tlsConnect } from '../core/net.ts';
+import { readUntil, tcpConnect, tlsConnect, type ConnectedSocket } from '../core/net.ts';
 
 interface Check {
   name: string;
@@ -23,9 +24,135 @@ export interface DoctorReport {
   ok: boolean;
   checks: Check[];
   summary: string;
+  /** Set when the system resolver answered a public name with a known block-page address. */
+  dnsHijack?: DnsHijack;
+}
+
+/** The system resolver answered a public name with an address that cannot be the real one. */
+interface DnsHijack {
+  name: string;
+  answer: string[];
+  reason: string;
+  /** What DNS-over-HTTPS said the real answer is, when it was reachable. */
+  viaDoh: string[];
+  dohVia: string | null;
 }
 
 const CF_PROBE_IP = '104.16.132.229';
+
+/** Names the resolver is asked for — both are Cloudflare hosts the scanner itself uses. */
+const DNS_PROBES = ['cloudflare.com', 'speed.cloudflare.com'];
+
+/**
+ * Addresses the Iranian DPI answers with instead of the real one: the block page and its
+ * siblings. Nothing legitimate ever resolves a public name into this gap.
+ */
+const BLOCK_PAGE_IPS = new Set(['10.10.34.34', '10.10.34.35', '10.10.34.36']);
+
+/**
+ * Why a resolver answer cannot be genuine, or `null` when it looks legitimate.
+ *
+ * Exported so the check can be pinned by tests: a poisoned line is the one failure mode
+ * that makes a healthy scanner look broken, because every domain source then probes an
+ * address that was never the host's.
+ */
+export function hijackReason(ip: string): string | null {
+  const addr = (ip ?? '').replace(/^\[|\]$/g, '').split('%')[0];
+  const family = net.isIP(addr);
+  if (family === 0) return `not an IP address (${ip})`;
+  if (family === 4) {
+    if (BLOCK_PAGE_IPS.has(addr)) return 'the operator block-page address';
+    const [a, b] = addr.split('.').map(Number);
+    const privateV4 =
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 100 && b >= 64 && b <= 127); // carrier-grade NAT space
+    return privateV4 ? 'a private/unroutable address' : null;
+  }
+  if (addr === '::' || addr === '::1') return 'a private/unroutable address';
+  if (/^f[cd]/i.test(addr)) return 'a private/unroutable address';
+  return null;
+}
+
+/**
+ * DoH providers, pinned by IP with their own SNI. Connecting by address is the point: the
+ * system resolver is the thing under test, so the check must not need it to work.
+ */
+const DOH_PROVIDERS = [
+  { ip: '1.1.1.1', sni: 'cloudflare-dns.com', path: '/dns-query', label: '1.1.1.1' },
+  { ip: '8.8.8.8', sni: 'dns.google', path: '/resolve', label: '8.8.8.8' },
+];
+
+/** Pulls the A records out of a DoH JSON response (`Answer[].data`, type 1). */
+export function parseDohAnswers(body: string): string[] {
+  try {
+    const parsed = JSON.parse(body.slice(body.indexOf('{'))) as {
+      Answer?: Array<{ type?: number; data?: string }>;
+    };
+    return (parsed.Answer ?? [])
+      .filter((record) => record.type === 1 && typeof record.data === 'string')
+      .map((record) => record.data!.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** Waits for the whole response body, so a Content-Length answer is never read early. */
+function bodyComplete(data: Buffer): boolean {
+  const text = data.toString('utf8');
+  const split = text.indexOf('\r\n\r\n');
+  if (split < 0) return false;
+  const head = text.slice(0, split);
+  const body = data.length - (split + 4);
+  const length = /content-length:\s*(\d+)/i.exec(head);
+  if (length) return body >= Number(length[1]);
+  if (/transfer-encoding:\s*chunked/i.test(head)) return text.endsWith('0\r\n\r\n');
+  return false;
+}
+
+/**
+ * One A lookup over DoH. Returns `null` when neither provider could be reached — which on
+ * a filtered line is itself normal and must not be reported as a failure.
+ */
+async function resolveOverHttps(
+  name: string,
+  signal: AbortSignal,
+): Promise<{ ips: string[]; via: string } | null> {
+  const deadline = Date.now() + 6000;
+  for (const provider of DOH_PROVIDERS) {
+    const budget = Math.min(3500, deadline - Date.now());
+    if (budget <= 0) break;
+    let conn: ConnectedSocket | null = null;
+    try {
+      conn = await tlsConnect(provider.ip, 443, {
+        timeoutMs: budget,
+        signal,
+        sni: provider.sni,
+        alpn: ['http/1.1'],
+      });
+      conn.socket.write(
+        `GET ${provider.path}?name=${encodeURIComponent(name)}&type=A HTTP/1.1\r\n` +
+          `Host: ${provider.sni}\r\n` +
+          'Accept: application/dns-json\r\n' +
+          'Connection: close\r\n\r\n',
+      );
+      const read = await readUntil(conn.socket, bodyComplete, budget, signal);
+      const body = read.data.toString('utf8');
+      const ips = parseDohAnswers(body.slice(body.indexOf('\r\n\r\n') + 4));
+      if (ips.length) return { ips, via: provider.label };
+    } catch {
+      /* try the next provider */
+    } finally {
+      conn?.socket.destroy();
+    }
+  }
+  return null;
+}
 
 export async function runDoctor(dataDir: string, sampleSni = 'www.cloudflare.com'): Promise<DoctorReport> {
   const checks: Check[] = [];
@@ -62,16 +189,75 @@ export async function runDoctor(dataDir: string, sampleSni = 'www.cloudflare.com
     /* ignore */
   }
 
-  let dnsIps: string[] = [];
-  try {
-    dnsIps = await defaultResolve('cloudflare.com', 4);
-    checks.push({ name: 'DNS lookup', ok: dnsIps.length > 0, detail: dnsIps.slice(0, 3).join(', ') || 'no answer' });
-  } catch (err) {
+  // Why this is not just "did DNS answer": on a filtered line the resolver *does* answer —
+  // with the block page. Every domain source then probes an address that was never the
+  // host's and the scan looks broken for no visible reason. The two rows below separate
+  // "the resolver is tampered with" from "Cloudflare is unreachable".
+  const answers: Array<{ name: string; ips: string[]; reason: string | null }> = [];
+  let dnsFailure = '';
+  for (const name of DNS_PROBES) {
+    try {
+      const ips = await defaultResolve(name, 4);
+      answers.push({ name, ips, reason: ips.map((ip) => hijackReason(ip)).find(Boolean) ?? null });
+    } catch (err) {
+      dnsFailure = (err as Error).message;
+    }
+  }
+
+  const doh = await resolveOverHttps('cloudflare.com', controller.signal);
+  const suspicious = answers.find((entry) => entry.reason);
+  let dnsHijack: DnsHijack | undefined;
+
+  const describe = (entry: { name: string; ips: string[] }) =>
+    `${entry.name} → ${entry.ips.slice(0, 3).join(', ') || 'no answer'}`;
+
+  if (!answers.length) {
     checks.push({
       name: 'DNS lookup',
       ok: false,
-      detail: (err as Error).message,
+      detail: dnsFailure || 'no answer',
       hint: 'the system resolver is not answering — check the DNS settings of the line',
+    });
+  } else if (suspicious) {
+    dnsHijack = {
+      name: suspicious.name,
+      answer: suspicious.ips,
+      reason: suspicious.reason!,
+      viaDoh: doh?.ips ?? [],
+      dohVia: doh?.via ?? null,
+    };
+    checks.push({
+      name: 'DNS lookup',
+      ok: false,
+      detail: `${describe(suspicious)} — ${suspicious.reason}`,
+      hint:
+        'the resolver is answering with a filtered address, so any domain source probes the wrong host: ' +
+        'use the Cloudflare/Paste source or an IP list (SNI is not resolved, so it is unaffected), and switch DNS to a resolver that is not tampered with',
+    });
+  } else {
+    checks.push({ name: 'DNS lookup', ok: true, detail: answers.map(describe).join(' | ') });
+  }
+
+  if (!doh) {
+    checks.push({
+      name: 'DNS over HTTPS',
+      ok: true,
+      detail: 'neither 1.1.1.1 nor 8.8.8.8 could be reached, comparison skipped',
+      hint: 'DoH is often blocked on a filtered line — if the DNS lookup above looks wrong, switch DNS before scanning domains',
+    });
+  } else {
+    const systemIps = new Set(answers.find((entry) => entry.name === 'cloudflare.com')?.ips ?? []);
+    const agrees = doh.ips.some((ip) => systemIps.has(ip));
+    checks.push({
+      name: `DNS over HTTPS via ${doh.via}`,
+      ok: agrees,
+      detail: agrees
+        ? `cloudflare.com → ${doh.ips.join(', ')} — the system resolver agrees`
+        : `cloudflare.com → ${doh.ips.join(', ')}, but the system resolver said ` +
+          `${[...systemIps].join(', ') || 'nothing'} — the answer is being tampered with`,
+      hint: agrees
+        ? undefined
+        : 'scan by IP (Cloudflare/Paste source) on this line, or change the resolver: domain sources cannot be trusted here',
     });
   }
 
@@ -141,7 +327,7 @@ export async function runDoctor(dataDir: string, sampleSni = 'www.cloudflare.com
   const summary = failed.length
     ? `${failed.length}/${checks.length} checks failed: ${failed.map((c) => c.name).join(', ')}`
     : `all ${checks.length} checks passed — the scanner should work on this line`;
-  return { ok: failed.length === 0, checks, summary };
+  return { ok: failed.length === 0, checks, summary, ...(dnsHijack ? { dnsHijack } : {}) };
 }
 
 interface SelfTestResult {

@@ -86,18 +86,36 @@ export class AdaptiveBackoff {
   }
 }
 
-interface WatchdogOptions {
+type CanaryDial = (canary: string, timeoutMs: number) => Promise<void>;
+
+export interface WatchdogOptions {
   /**
    * Canaries in `host:port` form. Read on every check, so a runtime
    * `configure({canaryHost})` takes effect immediately instead of being frozen at
    * construction time (which is how the setting used to be silently ignored).
    */
   canaries?: () => string[];
+  /**
+   * Tried after the configured canaries. Defaults to `DEFAULT_CANARIES`; pass `[]`
+   * to watch nothing but the configured endpoints.
+   */
+  fallbackCanaries?: string[];
   intervalMs?: number;
   timeoutMs?: number;
   failureThreshold?: number;
   /** Only probe while this returns true (i.e. a scan is running). */
   enabled?: () => boolean;
+  /**
+   * How a canary is dialled; defaults to a raw TCP connect. The dial owns the timeout
+   * (the default one passes `timeoutMs` to the connect) and rejects when the canary does
+   * not answer, which is what the caller reads as "the line is down".
+   *
+   * Injectable because a *loopback* line cannot be made to drop a SYN: a port with
+   * nothing behind it answers with a RST, and a refusal is deliberately counted as proof
+   * the path is up. So a test that has to take a line down mid-scan replaces the dial;
+   * the default one is exercised against real sockets in `ratelimit.test.ts`.
+   */
+  dial?: CanaryDial;
 }
 
 export interface NetworkState {
@@ -115,7 +133,39 @@ type WatchdogEvents = {
 };
 
 /** Built-in canaries, tried in order; the first success marks the line as up. */
-const DEFAULT_CANARIES = ['1.1.1.1:443', '8.8.8.8:53', '9.9.9.9:443'];
+export const DEFAULT_CANARIES = ['1.1.1.1:443', '8.8.8.8:53', '9.9.9.9:443'];
+
+/**
+ * Socket errors that *prove* the line works: a RST or a refusal came back, so the
+ * packet left the machine, crossed the operator and a remote answered. The canary is
+ * blocked or not listening — the scan has no reason to park over that.
+ */
+const REACHABLE_EVIDENCE = new Set(['ECONNREFUSED', 'ECONNRESET', 'EPIPE']);
+
+/**
+ * Dialling a canary: connect, then hang up. Nothing is sent — the connect is the whole
+ * question ("does anything at all answer on this path?"), and it is the cheapest way to
+ * ask it without dragging a full probe into the watchdog.
+ */
+const dialCanary: CanaryDial = async (canary, timeoutMs) => {
+  const [host, portStr] = canary.split(':');
+  const conn = await tcpConnect(host, Number(portStr || 443), { timeoutMs });
+  conn.socket.destroy();
+};
+
+/**
+ * The watch list, configured canaries first and the built-ins behind them, deduped.
+ * Order matters: the endpoint you care about decides as fast as possible, but a
+ * canary the operator blocks can never park a healthy scan on its own.
+ */
+export function mergeCanaries(custom: string[], fallback: string[] = DEFAULT_CANARIES): string[] {
+  const out: string[] = [];
+  for (const entry of [...custom, ...fallback]) {
+    const canary = (entry ?? '').trim();
+    if (canary && !out.includes(canary)) out.push(canary);
+  }
+  return out;
+}
 
 export class NetworkWatchdog extends Emitter<WatchdogEvents> {
   state: NetworkState = { offline: false, checks: 0, failures: 0, lastCheckAt: 0, message: 'ok', canaries: [] };
@@ -131,13 +181,13 @@ export class NetworkWatchdog extends Emitter<WatchdogEvents> {
   }
 
   /**
-   * Operator-supplied canaries win outright: an Iranian line that blocks
-   * 1.1.1.1/8.8.8.8 would otherwise park a healthy scan forever, because "any canary
-   * answered = line is up" can never be satisfied.
+   * Configured canaries are tried first, the built-ins stay behind them. A line that
+   * blocks 1.1.1.1 (Irancell/IR-MCI, and plenty of fiber ONUs) no longer parks a
+   * healthy scan: the watch list falls through to 8.8.8.8 and 9.9.9.9, and any
+   * answer — a completed connect *or* a refusal — means the path is up.
    */
   get canaries(): string[] {
-    const custom = (this.opts.canaries?.() ?? []).filter(Boolean);
-    return custom.length ? [...new Set(custom)] : DEFAULT_CANARIES;
+    return mergeCanaries(this.opts.canaries?.() ?? [], this.opts.fallbackCanaries ?? DEFAULT_CANARIES);
   }
 
   get intervalMs(): number {
@@ -182,35 +232,49 @@ export class NetworkWatchdog extends Emitter<WatchdogEvents> {
     this.state = { offline: false, checks: 0, failures: 0, lastCheckAt: 0, message: 'ok', canaries: [] };
   }
 
-  /** Runs one round-trip check; returns true when at least one canary answered. */
+  /**
+   * Runs one round-trip check; returns true when the line looks up.
+   *
+   * Every canary is offered a turn before the line is called down, and a refusal counts
+   * as an answer (see `REACHABLE_EVIDENCE`). Worst case is one timeout per canary, which
+   * is the interesting case anyway: a park is followed by `waitUntilOnline` polling, not
+   * by tight retries.
+   */
   async check(): Promise<boolean> {
     this.inFlight = true;
-    let anyOk = false;
     const canaries = this.canaries;
+    const dial = this.opts.dial ?? dialCanary;
+    let connected = false;
+    let refusedBy = '';
     for (const canary of canaries) {
-      const [host, portStr] = canary.split(':');
       try {
-        const conn = await tcpConnect(host, Number(portStr || 443), { timeoutMs: this.timeoutMs });
-        conn.socket.destroy();
-        anyOk = true;
+        await dial(canary, this.timeoutMs);
+        connected = true;
         break;
-      } catch {
-        /* try the next canary */
+      } catch (err) {
+        // A blocked or dead canary only speaks for itself — the loop keeps going, and a
+        // refusal is already proof that the path works.
+        if (REACHABLE_EVIDENCE.has((err as NodeJS.ErrnoException).code ?? '')) {
+          refusedBy = canary;
+          break;
+        }
       }
     }
     this.inFlight = false;
     this.state.checks += 1;
     this.state.lastCheckAt = Date.now();
     this.state.canaries = canaries;
-    if (anyOk) {
+    if (connected || refusedBy) {
+      const wasOffline = this.state.offline;
       this.consecutiveFailures = 0;
       this.state.failures = 0;
-      if (this.state.offline) {
-        this.state = { ...this.state, offline: false, message: 'line is back' };
-        this.emit('change', this.state);
-      } else {
-        this.state = { ...this.state, offline: false, message: 'ok' };
-      }
+      const message = connected
+        ? wasOffline
+          ? 'line is back'
+          : 'ok'
+        : `${refusedBy} refused the connection — the path answered, treating the line as up`;
+      this.state = { ...this.state, offline: false, message };
+      if (wasOffline) this.emit('change', this.state);
     } else {
       this.consecutiveFailures += 1;
       this.state.failures = this.consecutiveFailures;
@@ -218,12 +282,12 @@ export class NetworkWatchdog extends Emitter<WatchdogEvents> {
         this.state = {
           ...this.state,
           offline: true,
-          message: `no route to any canary (${canaries.join(', ')}) — pausing scan`,
+          message: `no answer from any canary (${canaries.join(', ')}) — pausing scan`,
         };
         this.emit('change', this.state);
       }
     }
-    return anyOk;
+    return connected || Boolean(refusedBy);
   }
 
   /** Waits until the line is reachable again (or the abort signal fires). */

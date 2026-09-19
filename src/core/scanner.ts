@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { Emitter, runPool, sleep } from './events.ts';
 import { buildTargets, splitHostPort } from './ipsrc.ts';
 import { measureDownload, measureUpload, probeOnce } from './probe.ts';
-import { AdaptiveBackoff, NetworkWatchdog, TokenBucket, type NetworkState } from './ratelimit.ts';
+import { AdaptiveBackoff, NetworkWatchdog, TokenBucket, type NetworkState, type WatchdogOptions } from './ratelimit.ts';
 import {
   FAILURE_SAMPLE_LIMIT,
   createResult,
@@ -114,11 +114,20 @@ export class Scanner extends Emitter<ScannerEvents> {
   private lastSnapshotAt = 0;
   readonly dataDir: string;
 
-  constructor(dataDir: string = defaultDataDir()) {
+  constructor(
+    dataDir: string = defaultDataDir(),
+    /**
+     * Watchdog overrides — everything except the two options the scanner owns. An
+     * integration test uses it to own the watch list and drive the line up and down; see
+     * `test/hostile-line.test.ts`.
+     */
+    watchdog: Partial<Omit<WatchdogOptions, 'canaries' | 'enabled'>> = {},
+  ) {
     super();
     this.dataDir = dataDir;
     this.bucket = new TokenBucket(this.config.rateLimitPerSec);
     this.watchdog = new NetworkWatchdog({
+      ...watchdog,
       // Read through a getter, so `configure({canaryHost})` from the GUI/CLI actually
       // reaches the watchdog (a constructor-time snapshot silently ignored it).
       canaries: () => this.canaryList(),
@@ -132,7 +141,11 @@ export class Scanner extends Emitter<ScannerEvents> {
     });
   }
 
-  /** Canaries for the line watchdog: the operator's own endpoint wins, else the defaults. */
+  /**
+   * The configured canary only. The watchdog appends `DEFAULT_CANARIES` behind it, so an
+   * endpoint the operator blocks cannot park a healthy scan (and with the default config
+   * `1.1.1.1:443` is already a built-in, so nothing extra is dialled).
+   */
   private canaryList(): string[] {
     return this.config.canaryHost ? [`${this.config.canaryHost}:${this.config.canaryPort}`] : [];
   }

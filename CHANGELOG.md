@@ -1,5 +1,77 @@
 # Changelog
 
+## 1.4.0 — 2026-09-20
+
+Release for the lines this tool exists for. The watchdog can no longer park a healthy scan
+over a canary the operator blocks, `ezscan doctor` can tell a rewritten resolver apart from
+a broken scanner, and the line-stability claims are now proven against a fake access
+network instead of described.
+
+### Fixed
+- **The line watchdog can no longer park a healthy scan over a canary the operator
+  blocks.** It watched exactly one endpoint — the configured `canaryHost`, and the default
+  config sets that to `1.1.1.1` — so on IR-MCI, Irancell and plenty of fiber lines (where
+  1.1.1.1 is filtered, or the ONU drops it) two failed rounds in a row marked the line down
+  and the scan sat frozen at "waiting for the line to come back…" on a line that was
+  perfectly fine. It now fails open: the configured canary is tried first, the built-ins
+  (8.8.8.8:53, 9.9.9.9:443) stay behind it as a fallback, and a **refusal counts as an
+  answer** — a RST or `ECONNREFUSED` proves the path works, so a canary that is merely
+  blocked or not listening can never pause a scan. The line is called down only when no
+  canary answers at all, and the message names every endpoint that got a turn. With the
+  default config nothing extra is dialled (`1.1.1.1:443` is already a built-in, and the
+  list is deduped); `--no-autopause` still turns parking off completely.
+
+### Added
+- **`ezscan doctor` now detects a resolver that is being rewritten.** Its DNS check used to
+  pass as long as *something* came back, so on a line that answers public names with the
+  operator's block-page address (`10.10.34.34` and siblings) the report said "DNS lookup
+  ok" while every domain source was probing an address that was never the host's. The check
+  now flags block-page answers, private/loopback/CGNAT answers for a public name and
+  non-addresses, and it resolves the same name over **DNS-over-HTTPS** — connecting to
+  `1.1.1.1` (`cloudflare-dns.com`) and `8.8.8.8` (`dns.google`) *by IP with their own SNI*,
+  so the comparison does not depend on the resolver under test — to say what the real
+  answer is. A `DNS over HTTPS` row reports agreement or tampering, an unreachable DoH
+  endpoint is reported as "comparison skipped" rather than a failure, and the CLI prints a
+  `DNS answers are being rewritten on this line` block with the fix (scan by IP, or change
+  the resolver). `DoctorReport.dnsHijack` carries the same detail to the GUI.
+
+### Tests
+- `test/helpers/hostile-line.ts` — a fake upstream that behaves like the access network the
+  scanner usually meets: a **hard session limit** (CGNAT / the ONU's conntrack table) that
+  resets the sessions past it and drops the whole line for `outageMs` once it is filled,
+  per-response **delay and jitter**, and an **MTU/MSS blackhole** that sends the headers and
+  the first bytes of a download and then never finishes it. It counts accepted/refused
+  sessions, peak concurrency, outages, resets and stalls, so a test asserts on what
+  happened rather than on timing luck.
+- `test/hostile-line.test.ts` — the integration proof behind the line-safety claims:
+  a 20-worker burst on 24 addresses fills the table (`peakConcurrent >= 12`), drops the line
+  and loses the addresses probed during the outage, while the same addresses on the same
+  line are *all* found with 6 workers (peak ≤ 6, no outage, nothing refused); a 300 ms
+  response delays every row red at `timeout 120` and green at `timeout 1500` with the delay
+  visible in the measurement and the failure attributed to `http`/`timeout` only; a line
+  resetting 85% of sessions raises `backoffFactor` above 1 and is still never dropped; and a
+  black-holed 400 KB transfer is measured as slow (transfer-bounded, run finishes in
+  < 8 s) while an unblocked transfer on the same addresses is far faster, with the
+  addresses healthy either way.
+- The **park → resume cycle is now proven, not described**: a scan is swept against the fake
+  line, the line is taken down at address 6 of 60, and `test/hostile-line.test.ts` asserts the
+  scan parks where it stands (state `offline`, `stats.offline`, the announced `network` event,
+  the `network:` log line and the "waiting for the line to come back…" status), that the
+  address list **stops being consumed** while it is down (`done` frozen across two samples,
+  `inflight` back to 0, no failure charged to an address), that the watchdog keeps checking
+  the line meanwhile, and that the sweep resumes **by itself** when the line returns — all 60
+  addresses probed, all 60 healthy, none of them twice. A loopback line cannot be made to drop
+  a SYN (a closed port answers with a RST, which this watchdog counts as proof the path is
+  up), so the test replaces the canary *dial* (`NetworkWatchdog.dial`, and `Scanner` now
+  accepts watchdog overrides) while the probe traffic, the session table and every result
+  asserted stay real.
+- `test/doctor.test.ts`: the block-page/private/CGNAT/IPv6 classification and the DoH
+  response parsing (Cloudflare and Google both return `Answer[].data` with the A records
+  typed 1, CNAME first).
+- Regression tests for the fail-open path: an unanswered canary falls through to the next,
+  a refused connection keeps the line up, the watch list is ordered and deduped, and the
+  line is still called down (and still resets) when nothing answers.
+
 ## 1.3.1 — 2026-09-19
 
 Review pass over the paths the suite exercised least — source expansion, share-link parsing

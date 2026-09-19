@@ -126,6 +126,21 @@ export function printDoctor(out: Output, report: DoctorReport): void {
     out.line(`${check.ok ? out.paint('green', '[ OK ]') : out.paint('red', '[FAIL]')} ${check.name} — ${check.detail}`);
     if (check.hint) out.line(`        ${out.paint('dim', `→ ${check.hint}`)}`);
   }
+  if (report.dnsHijack) {
+    const hijack = report.dnsHijack;
+    out.line('');
+    out.line(out.paint('yellow', '! DNS answers are being rewritten on this line'));
+    out.line(`  ${hijack.name} → ${hijack.answer.join(', ')} (${hijack.reason})`);
+    if (hijack.viaDoh.length) {
+      out.line(`  DNS over HTTPS (via ${hijack.dohVia}) answers: ${hijack.viaDoh.join(', ')}`);
+    }
+    out.line(
+      out.paint(
+        'dim',
+        '  → scan by IP (the Cloudflare or Paste source): a domain source would probe the filtered address',
+      ),
+    );
+  }
   out.line('');
   out.line(report.ok ? out.paint('green', report.summary) : out.paint('yellow', report.summary));
 }

@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
+import { DEFAULT_CANARIES } from '../src/core/ratelimit.ts';
 import { Scanner } from '../src/core/scanner.ts';
 import { DEFAULT_CONFIG, type IpResult, type ScanConfig } from '../src/core/types.ts';
 import { startFakeEdge, type FakeEdge } from './helpers/localnet.ts';
@@ -222,7 +223,11 @@ test('a configured canary reaches the running watchdog', async () => {
   }
   const network = scanner.getNetwork();
   assert.ok(network.checks > 0, 'the watchdog ran a check');
-  assert.deepEqual(network.canaries, [`127.0.0.1:${edge.port}`], 'the configured canary is the one being watched');
+  assert.deepEqual(
+    network.canaries,
+    [`127.0.0.1:${edge.port}`, ...DEFAULT_CANARIES],
+    'the configured canary is watched first, with the built-ins as the fallback',
+  );
   assert.equal(network.offline, false, 'the local canary answered');
   await done;
 });

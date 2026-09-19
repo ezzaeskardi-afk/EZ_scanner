@@ -1,0 +1,228 @@
+/**
+ * A fake upstream that behaves like the access network the scanner usually meets.
+ *
+ * The probes are cheap on localhost, so "everything is red on my line" cannot be
+ * reproduced with the ordinary fake edge (`helpers/localnet.ts`). This one models the three
+ * things that actually hurt, and it counts what happened so a test can *prove* behaviour
+ * instead of asserting on timing luck:
+ *
+ *   - **A session table with a hard limit** (CGNAT on Irancell/IR-MCI, the ONU's conntrack
+ *     table on fiber). Above the limit a connection is reset (a real RST, what a full NAT
+ *     table sends) or black-holed — and, as on a real line, an operator-style `outageMs`
+ *     drops the whole line for a while, which is the "the connection dies and the router
+ *     needs a restart" symptom of issues #25/#62/#96.
+ *   - **Delay and jitter** on every response, so "the timeout is tighter than the line" can
+ *     be reproduced deliberately rather than by waiting for a bad day.
+ *   - **An MTU/MSS blackhole**: the response headers and the first bytes arrive, the rest
+ *     never does — the PPPoE/PMTU pathology where TLS is fine and a large transfer stalls.
+ *
+ * Everything is loopback-only. Bind to all interfaces (`listenAll`) when one fake line has
+ * to stand in for many addresses (`127.0.0.1`, `127.0.0.2`, …).
+ */
+import { readFileSync } from 'node:fs';
+import https from 'node:https';
+import type { AddressInfo, Socket } from 'node:net';
+import { fileURLToPath } from 'node:url';
+
+export interface HostileLineOptions {
+  /** Concurrent connections the session table holds; going past it is what hurts. */
+  sessionLimit: number;
+  /** What happens above the limit: a reset, or a socket that accepts and never answers. */
+  overLimit?: 'refuse' | 'blackhole';
+  /** Set to drop the whole line (every live session) for this long when the limit is hit. */
+  outageMs?: number;
+  /** Share of accepted sessions reset immediately (a real RST), as a DPI/NAT box does. */
+  resetRate?: number;
+  /** Fixed delay added to every response. */
+  baseDelayMs?: number;
+  /** Extra random delay (0..jitterMs) added to every response. */
+  jitterMs?: number;
+  /** Stop writing a `/__down` response after this many bytes and never finish it. */
+  stallOverBytes?: number;
+  /** Bind to all interfaces so `127.0.0.2`, `127.0.0.3`, … reach the same line. */
+  listenAll?: boolean;
+  /** Status for ordinary requests. */
+  status?: number;
+}
+
+interface HostileLineStats {
+  /** Sessions the line accepted (it had room in the table). */
+  accepted: number;
+  /** Sessions turned away: over the limit, or while the line was down. */
+  refused: number;
+  peakConcurrent: number;
+  live: number;
+  /** Times the whole line was dropped. */
+  outages: number;
+  /** Sessions killed by `resetRate`. */
+  resets: number;
+  /** Responses that were black-holed part-way through. */
+  stalls: number;
+  requests: number;
+  servedBytes: number;
+}
+
+export interface HostileLine {
+  port: number;
+  /** Counters for the *whole* life of the listener; call `resetStats()` between runs. */
+  stats: HostileLineStats;
+  /** Drops the line now for `ms`: every live session dies and new ones are turned away. */
+  drop(ms: number): void;
+  isDead(): boolean;
+  resetStats(): void;
+  close(): Promise<void>;
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+export function startHostileLine(opts: HostileLineOptions): Promise<HostileLine> {
+  const key = readFileSync(fileURLToPath(new URL('../fixtures/localhost-key.pem', import.meta.url)));
+  const cert = readFileSync(fileURLToPath(new URL('../fixtures/localhost-cert.pem', import.meta.url)));
+
+  const stats: HostileLineStats = {
+    accepted: 0,
+    refused: 0,
+    peakConcurrent: 0,
+    live: 0,
+    outages: 0,
+    resets: 0,
+    stalls: 0,
+    requests: 0,
+    servedBytes: 0,
+  };
+  /** Accepted sessions — the ones the session table is holding. */
+  const live = new Set<Socket>();
+  /** Every socket, so `close()` cannot leave a paused one behind. */
+  const sockets = new Set<Socket>();
+  let deadUntil = 0;
+
+  /**
+   * A reset, not a polite FIN. `resetAndDestroy` is what makes the client see
+   * `ECONNRESET` ("the path is killing connections") instead of a clean close, which is
+   * the difference between a NAT table refusing a session and a host hanging up.
+   */
+  const reset = (socket: Socket): void => {
+    if (typeof socket.resetAndDestroy === 'function') socket.resetAndDestroy();
+    else socket.destroy();
+  };
+
+  const drop = (ms: number): void => {
+    deadUntil = Math.max(deadUntil, Date.now() + ms);
+    stats.outages += 1;
+    for (const socket of sockets) reset(socket);
+    live.clear();
+    stats.live = 0;
+  };
+
+  const server = https.createServer({ key, cert }, (req, res) => {
+    stats.requests += 1;
+    const delay = (opts.baseDelayMs ?? 0) + (opts.jitterMs ? Math.random() * opts.jitterMs : 0);
+    const url = new URL(req.url ?? '/', 'https://hostile.line');
+
+    const respond = (): void => {
+      if (res.destroyed) return;
+      if (url.pathname.startsWith('/__down')) {
+        const requested = Number(url.searchParams.get('bytes')) || 1_000_000;
+        const stallAt = opts.stallOverBytes && requested > opts.stallOverBytes ? opts.stallOverBytes : 0;
+        // Content-Length still promises the whole thing: that is exactly why the client
+        // waits instead of failing fast. This is the blackhole signature.
+        res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': String(requested) });
+        const chunk = Buffer.alloc(16 * 1024, 0x41);
+        let sent = 0;
+        const pump = (): void => {
+          if (res.destroyed) return;
+          if (stallAt && sent >= stallAt) {
+            stats.stalls += 1;
+            return; // …and nothing ever finishes this response.
+          }
+          if (sent >= requested) {
+            res.end();
+            return;
+          }
+          const size = Math.min(stallAt ? Math.min(chunk.length, stallAt - sent) : chunk.length, requested - sent);
+          res.write(chunk.subarray(0, size));
+          sent += size;
+          stats.servedBytes += size;
+          setImmediate(pump);
+        };
+        pump();
+        return;
+      }
+      res.writeHead(opts.status ?? 200, { 'Content-Type': 'text/plain', 'cf-ray': '8f2a1b3c4d5e6f70-FRA' });
+      res.end('ok');
+    };
+
+    if (delay > 0) setTimeout(respond, delay);
+    else respond();
+  });
+
+  // `tls.Server` types its 'connection' event as a bare Duplex, but it hands over the raw
+  // TCP socket — the one that has to be counted, paused and reset.
+  server.on('connection', (socket) => {
+    const raw = socket as Socket;
+    sockets.add(raw);
+    raw.on('close', () => {
+      sockets.delete(raw);
+      live.delete(raw);
+      stats.live = live.size;
+    });
+    if (Date.now() < deadUntil) {
+      stats.refused += 1;
+      reset(raw);
+      return;
+    }
+    if (live.size >= opts.sessionLimit) {
+      stats.refused += 1;
+      if (opts.outageMs) drop(opts.outageMs);
+      else if (opts.overLimit === 'blackhole') raw.pause(); // accepted by the kernel, never read
+      else reset(raw);
+      return;
+    }
+    // A share of sessions killed outright — the DPI/NAT reset a mobile line lives with.
+    // It has to happen on the raw socket: a TLSSocket's handle cannot be sent as a RST.
+    if (opts.resetRate && Math.random() < opts.resetRate) {
+      stats.resets += 1;
+      reset(raw);
+      return;
+    }
+    live.add(raw);
+    stats.live = live.size;
+    stats.accepted += 1;
+    stats.peakConcurrent = Math.max(stats.peakConcurrent, live.size);
+  });
+
+
+  return new Promise((resolve) => {
+    server.listen(0, opts.listenAll ? '0.0.0.0' : '127.0.0.1', () => {
+      const { port } = server.address() as AddressInfo;
+      resolve({
+        port,
+        stats,
+        drop,
+        isDead: () => Date.now() < deadUntil,
+        resetStats: () => {
+          for (const key of Object.keys(stats) as Array<keyof HostileLineStats>) {
+            stats[key] = 0;
+          }
+          stats.live = live.size;
+          stats.peakConcurrent = live.size;
+        },
+        close: () =>
+          new Promise<void>((done) => {
+            for (const socket of sockets) socket.destroy();
+            sockets.clear();
+            live.clear();
+            server.closeAllConnections?.();
+            server.close(() => done());
+          }),
+      });
+    });
+  });
+}
+
+/** Waits until the simulated line is back, so a test never races a simulated outage. */
+export async function waitUntilLineUp(line: HostileLine, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (line.isDead() && Date.now() < deadline) await sleep(50);
+  if (line.isDead()) throw new Error('the simulated line never came back');
+}

@@ -126,7 +126,7 @@ ezscan scan --source paste --targets my-ips.txt --csv out.csv   # probe phase on
 ezscan resume a1b2c3d4                         # continue a session
 ezscan sessions                                # list sessions
 ezscan export a1b2c3d4 --format links --link-template "vless://…" --out links.txt
-ezscan doctor                                  # DNS/TCP/TLS/HTTP/throughput
+ezscan doctor                                  # DNS (tampering included) /TCP/TLS/HTTP/throughput
 ezscan selftest                                # "is it my line or my settings?"
 ezscan config "vless://…"                      # SNI/port/transport of a config
 ezscan scan --help                             # every option
@@ -168,10 +168,13 @@ Operators answer a heavy scan with a full outage. Three independent layers:
 - **Adaptive slow-down**: the failure ratio is tracked with an EWMA and the gap between
   probes grows automatically when resets/timeouts spike, relaxing again when the line calms.
 - **Line watchdog**: canaries get a trial TCP connect every few seconds; when the line dies
-  the scan **parks**, and it resumes automatically once the line comes back. The built-in
-  canaries are 1.1.1.1:443, 8.8.8.8:53 and 9.9.9.9:443 — set `canaryHost`/`canaryPort` (CLI:
-  `--canary host:port`) to watch your own endpoint instead, which is what a line that
-  blocks all three needs. The network state reports the endpoints in use.
+  the scan **parks**, and it resumes automatically once the line comes back. It fails open:
+  your canary is tried first and the built-ins (1.1.1.1:443, 8.8.8.8:53, 9.9.9.9:443) stay
+  behind it, so a canary the operator blocks can never park a healthy scan; a refusal also
+  counts as an answer, because a RST proves the path works. Only when *no* canary answers at
+  all is the line called down. Set `canaryHost`/`canaryPort` (CLI: `--canary host:port`) to
+  watch your own endpoint first, and run `--no-autopause` to disable parking entirely. The
+  network state reports every endpoint that was offered a turn.
 
 You also get a warning when the SNI equals your own domain (scanning with a personal domain
 raises the odds of it being filtered) — the recommended route is to scan with a generic SNI
@@ -205,7 +208,8 @@ exact address, even after a reboot.
 
 **I get no IPs at all.** Run `ezscan doctor`, then `ezscan selftest`; the output says whether
 the line or the gates are at fault. If selftest is green, set `minScore` to `0` and keep
-WS/idle off.
+WS/idle off. If doctor flags the resolver, the line is rewriting DNS answers: scan by IP
+(the Cloudflare or Paste source) instead of by domain.
 
 **Why does the measured speed differ from my tunnel?** The probe measures the direct path to
 the edge (no proxy) and is meant for **ranking** IPs. Judge the final number inside your
@@ -268,15 +272,27 @@ chart = BarChart(chartLabels, [chartSeries], "grouped", "latency bucket", "Addre
 
 ```bash
 npm run typecheck
-npm test                  # 119 tests: probe engine, gating, pause/resume, snapshots,
-                          # exports, HTTP API, OpenUI report, GUI contract, CLI, dead code
+npm test                  # 132 tests: probe engine, gating, pause/resume, snapshots,
+                          # exports, HTTP API, OpenUI report, GUI contract, CLI, dead code,
+                          # and integration runs against a fake hostile access network
 npm run check:openui-css  # the vendored OpenUI stylesheet is still minimal, complete and correctly pinned
 npm run check:deadcode    # CI gate: dead exports, unused CSS tokens, unused runtime strings, non-English text
 ```
 
 The tests stand up a **local fake edge** (TLS + WebSocket + a slow/hostile server) and
 exercise the engine without needing the real internet; `npm run selftest` runs a real scan
-against Cloudflare addresses. `test/openui.test.ts` validates the OpenUI Lang grammar itself
+against Cloudflare addresses. `test/hostile-line.test.ts` goes further: its upstream
+(`test/helpers/hostile-line.ts`) has a **hard session limit** that resets the sessions past
+it and drops the whole line when it is filled, adds delay/jitter to every response, and can
+**black-hole an MTU-sized transfer** part-way through. That is what lets the suite assert
+the claims instead of describing them: a worker burst trips the table and loses addresses,
+the same addresses under a worker budget that fits are all found, a timeout tighter than the
+line turns it all red while a viable one turns it all green, a resetting line raises the
+inter-probe delay instead of being hammered, and a stalled transfer is measured as slow
+without hanging the run or poisoning the verdict on a healthy address — and a line that
+disappears *mid-sweep* parks the scan on the spot (state `offline`, the banner, the
+`network:` log), consumes no address while it is down, and finishes the whole 60-address
+list by itself once the line is back. `test/openui.test.ts` validates the OpenUI Lang grammar itself
 (every line is `id = expr`, no undefined identifier, equal table column lengths, only
 official library components), `test/gui.test.ts` holds the contract between
 `index.html`/`app.js`/`styles.css` (every selected id exists, every icon resolves, every

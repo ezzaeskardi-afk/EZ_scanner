@@ -3,15 +3,19 @@
  *
  * The watchdog is what parks a scan when the line dies — which also makes it the thing
  * that can park a scan *forever* when it watches endpoints the operator cannot reach.
- * A configured canary therefore has to win outright, and has to be re-read on every
- * check so a runtime reconfiguration actually takes effect.
+ * It therefore fails open: the configured canary is tried first and the built-ins stay
+ * behind it, a refusal counts as proof the path is up, and the line is only called down
+ * when no canary answers at all. Canaries are re-read on every check so a runtime
+ * reconfiguration actually takes effect.
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { AdaptiveBackoff, NetworkWatchdog, TokenBucket } from '../src/core/ratelimit.ts';
+
+import { AdaptiveBackoff, DEFAULT_CANARIES, NetworkWatchdog, TokenBucket, mergeCanaries } from '../src/core/ratelimit.ts';
 import { startFakeTcp } from './helpers/localnet.ts';
 
-const DEFAULT_CANARIES = ['1.1.1.1:443', '8.8.8.8:53', '9.9.9.9:443'];
+/** RFC 5737 TEST-NET-1: never routable, so a connect there is never answered. */
+const BLACKHOLE = '192.0.2.1:443';
 
 test('the token bucket is unlimited at rate 0 and paces at the configured rate', async () => {
   const unlimited = new TokenBucket(0);
@@ -41,8 +45,70 @@ test('without a configured canary the built-ins are used', () => {
   assert.deepEqual(new NetworkWatchdog({ canaries: () => [] }).canaries, DEFAULT_CANARIES);
 });
 
+test('the watch list is configured canary first, built-ins behind it, deduped', () => {
+  assert.deepEqual(mergeCanaries(['my.endpoint:8443']), ['my.endpoint:8443', ...DEFAULT_CANARIES]);
+  // The default config watches 1.1.1.1, which is already a built-in: nothing extra is dialled.
+  assert.deepEqual(mergeCanaries(['1.1.1.1:443']), DEFAULT_CANARIES);
+  assert.deepEqual(mergeCanaries(['  ', 'a:1', 'a:1']), ['a:1', ...DEFAULT_CANARIES]);
+  assert.deepEqual(mergeCanaries([], []), [], 'an empty fallback list leaves only what was configured');
+});
+
+test('a blocked canary does not park the scan — the next one decides', async () => {
+  const listener = await startFakeTcp();
+  try {
+    const healthy = `127.0.0.1:${listener.port}`;
+    const watchdog = new NetworkWatchdog({
+      canaries: () => [BLACKHOLE],
+      fallbackCanaries: [healthy],
+      failureThreshold: 1,
+      timeoutMs: 300,
+    });
+    assert.deepEqual(watchdog.canaries, [BLACKHOLE, healthy]);
+    assert.equal(await watchdog.check(), true, 'the unanswered canary falls through to the healthy one');
+    assert.equal(watchdog.state.offline, false, 'a canary the operator blocks must not pause the scan');
+    assert.deepEqual(watchdog.state.canaries, [BLACKHOLE, healthy], 'the state names every canary that got a turn');
+  } finally {
+    await listener.close();
+  }
+});
+
+test('a refused canary proves the path is up', async () => {
+  const listener = await startFakeTcp();
+  const port = listener.port;
+  await listener.close(); // nothing listens there any more
+
+  const watchdog = new NetworkWatchdog({
+    canaries: () => [`127.0.0.1:${port}`],
+    fallbackCanaries: [],
+    failureThreshold: 1,
+    timeoutMs: 400,
+  });
+  assert.equal(await watchdog.check(), true, 'ECONNREFUSED means a remote answered, so the line is up');
+  assert.equal(watchdog.state.offline, false);
+  assert.match(watchdog.state.message, /refused the connection/);
+});
+
+test('the line is only called down when no canary answers at all', async () => {
+  const watchdog = new NetworkWatchdog({
+    canaries: () => [BLACKHOLE],
+    fallbackCanaries: [],
+    failureThreshold: 2,
+    timeoutMs: 300,
+  });
+  assert.equal(await watchdog.check(), false);
+  assert.equal(watchdog.state.offline, false, 'one unanswered round is not enough');
+  assert.equal(await watchdog.check(), false);
+  assert.equal(watchdog.state.offline, true);
+  assert.match(watchdog.state.message, /no answer from any canary \(192\.0\.2\.1:443\)/);
+});
+
 test('reset() clears a stale line verdict so a new scan starts clean', async () => {
-  const watchdog = new NetworkWatchdog({ canaries: () => ['127.0.0.1:1'], failureThreshold: 2, timeoutMs: 400 });
+  const watchdog = new NetworkWatchdog({
+    canaries: () => [BLACKHOLE],
+    fallbackCanaries: [],
+    failureThreshold: 2,
+    timeoutMs: 300,
+  });
   await watchdog.check();
   await watchdog.check();
   assert.equal(watchdog.state.offline, true, 'two failed checks mean the line is down');
@@ -59,16 +125,20 @@ test('reset() clears a stale line verdict so a new scan starts clean', async () 
   assert.equal(watchdog.state.offline, false, 'the threshold counts from scratch, not from before the reset');
 });
 
-test('a configured canary replaces the built-ins and is re-read on every check', async () => {
+test('canaries are re-read on every check', async () => {
   const listener = await startFakeTcp();
   try {
-    let canaries = ['127.0.0.1:1']; // nothing is listening there
-    const watchdog = new NetworkWatchdog({ canaries: () => canaries, failureThreshold: 1, timeoutMs: 400 });
+    let canaries = [BLACKHOLE];
+    const watchdog = new NetworkWatchdog({
+      canaries: () => canaries,
+      fallbackCanaries: [],
+      failureThreshold: 1,
+      timeoutMs: 300,
+    });
 
-    assert.deepEqual(watchdog.canaries, canaries, 'the configured canary replaces the defaults');
     assert.equal(await watchdog.check(), false);
-    assert.equal(watchdog.state.offline, true, 'no route to the only canary means offline');
-    assert.equal(watchdog.state.canaries.join(), '127.0.0.1:1');
+    assert.equal(watchdog.state.offline, true, 'nothing answered, so the scan parks');
+    assert.deepEqual(watchdog.state.canaries, canaries);
 
     // What `configure({canaryHost, canaryPort})` does at runtime: the next check must use it.
     canaries = [`127.0.0.1:${listener.port}`];

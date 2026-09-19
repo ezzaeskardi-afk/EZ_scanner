@@ -163,7 +163,7 @@ ezscan resume a1b2c3d4 --speed --top 30
 ## 8. Troubleshooting: "no green IPs"
 
 ```bash
-ezscan doctor      # checks DNS, TCP, TLS, HTTP and the throughput path
+ezscan doctor      # checks DNS (and resolver tampering), TCP, TLS, HTTP and the throughput path
 ezscan selftest    # probes a few real edges and says whether the line or the settings fail
 ```
 

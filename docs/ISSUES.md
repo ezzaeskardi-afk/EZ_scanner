@@ -119,11 +119,20 @@ line until the router restarts.
 **EZ Scanner** addresses this with three independent controls:
 1. global token-bucket rate limit (`rateLimitPerSec`) + per-worker delay;
 2. adaptive back-off: an EWMA of the failure ratio raises the inter-probe delay
-   automatically when resets/timeouts spike, and relaxes it when the line calms;
-3. a network watchdog that TCP-checks three canaries (1.1.1.1:443, 8.8.8.8:53,
-   9.9.9.9:443) — when the line dies the scan **parks** instead of hammering a dead
-   link, and resumes automatically when it comes back (`core/ratelimit.ts`,
-   surfaced in the GUI as the "line: DOWN" banner).
+   automatically when resets/timeouts spike, and relaxes it when the line calms —
+   `test/hostile-line.test.ts` proves it on a line that resets 85 % of sessions;
+3. a network watchdog that TCP-checks canaries (your own first, then 1.1.1.1:443,
+   8.8.8.8:53, 9.9.9.9:443 behind it) — when the line dies the scan **parks** instead of
+   hammering a dead link, and resumes automatically when it comes back (`core/ratelimit.ts`,
+   surfaced in the GUI as the "line: DOWN" banner). The whole cycle — parked, reported, then
+   finishing the list on its own with no address lost — is driven end to end in
+   `test/hostile-line.test.ts` by taking the line down at address 6 of 60. The whole set is exercised against a
+   fake session-limited access network in `test/hostile-line.test.ts`: a 20-worker burst
+   fills the session table, resets the sessions past it and drops the line, while the same
+   addresses under a worker budget that fits are all found. It fails open, which matters on
+   IR-MCI/Irancell/fiber lines where a canary may simply be blocked: your canary is
+   tried first, the built-ins stay behind it, and a refused connection counts as an
+   answer — the line is only called down when no canary answers at all.
 
 ### #48 "risk of the config getting filtered when used together with the scanner"
 **EZ Scanner** detects `sni == config domain` and warns before the scan starts,
@@ -155,4 +164,4 @@ writer is unit-tested (`test/export.test.ts`).
 | #93/#73 "no documentation / manual" | `README.md`, `docs/USAGE.md`, `docs/ISSUES.md`, `--help` for every command, and a quick-help panel inside the GUI |
 | #70 "BPB note" | The config builder turns discovered addresses into ready BPB/v2ray links; scanning a BPB fronting domain works through the "config" source |
 | #86/#86-like "which IP is best?" | Score (0–100) mixing latency, loss, DPI survival, HTTP validity and throughput + sortable columns |
-| "is it my line or the tool?" | `ezscan doctor` (DNS/TCP/TLS/HTTP/speed checks with hints) and `ezscan selftest` (probes real edges and prints a verdict) |
+| "is it my line or the tool?" | `ezscan doctor` (DNS/TCP/TLS/HTTP/speed checks with hints; the DNS check flags block-page answers and compares the system resolver against DNS-over-HTTPS) and `ezscan selftest` (probes real edges and prints a verdict) |
