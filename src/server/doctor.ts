@@ -261,6 +261,25 @@ export async function runDoctor(dataDir: string, sampleSni = 'www.cloudflare.com
     });
   }
 
+  // Which edge the rows below dial. The fixed address is a last resort: a Cloudflare edge
+  // that does not serve a name answers `403 error code: 1034`, so probing it with that
+  // `sni` marks rows "ok" that proved nothing about the line (and let the throughput row
+  // read an error page as a transfer). Each row now dials an address resolved for the name
+  // it tests — the SNI itself for TLS/HTTP, the speed host for the transfer.
+  const resolvedEdge = (name: string, fallback: string): string => {
+    const entry = answers.find((candidate) => candidate.name === name && !candidate.reason && candidate.ips.length);
+    return entry?.ips[0] ?? fallback;
+  };
+  const speedIp = resolvedEdge('speed.cloudflare.com', CF_PROBE_IP);
+  let sniIp = CF_PROBE_IP;
+  if (net.isIP(sampleSni) === 0) {
+    try {
+      sniIp = (await defaultResolve(sampleSni, 4))[0] ?? CF_PROBE_IP;
+    } catch {
+      /* unresolvable SNI: the fixed address at least proves the path to a Cloudflare edge */
+    }
+  }
+
   for (const canary of [
     { host: '1.1.1.1', port: 443 },
     { host: '8.8.8.8', port: 53 },
@@ -282,12 +301,12 @@ export async function runDoctor(dataDir: string, sampleSni = 'www.cloudflare.com
   }
 
   try {
-    const conn = await tlsConnect(CF_PROBE_IP, 443, { timeoutMs: 6000, signal: controller.signal, sni: sampleSni });
+    const conn = await tlsConnect(sniIp, 443, { timeoutMs: 6000, signal: controller.signal, sni: sampleSni });
     conn.socket.destroy();
-    checks.push({ name: `TLS handshake ${CF_PROBE_IP} (sni=${sampleSni})`, ok: true, detail: 'handshake completed' });
+    checks.push({ name: `TLS handshake ${sniIp} (sni=${sampleSni})`, ok: true, detail: 'handshake completed' });
   } catch (err) {
     checks.push({
-      name: `TLS handshake ${CF_PROBE_IP} (sni=${sampleSni})`,
+      name: `TLS handshake ${sniIp} (sni=${sampleSni})`,
       ok: false,
       detail: (err as Error).message,
       hint: 'TLS is being interfered with on this line: try probe mode "tcp", a different SNI, or scan fewer addresses with the gentle preset',
@@ -296,7 +315,7 @@ export async function runDoctor(dataDir: string, sampleSni = 'www.cloudflare.com
 
   const cfg = { ...DEFAULT_CONFIG, sni: sampleSni, timeoutMs: 6000, minSuccesses: 1, tries: 1 };
   try {
-    const attempt = await probeOnce({ ip: CF_PROBE_IP, port: 443, sni: sampleSni }, cfg, controller.signal);
+    const attempt = await probeOnce({ ip: sniIp, port: 443, sni: sampleSni }, cfg, controller.signal);
     checks.push({
       name: 'HTTP through the edge',
       ok: attempt.ok,
@@ -309,15 +328,19 @@ export async function runDoctor(dataDir: string, sampleSni = 'www.cloudflare.com
 
   try {
     const down = await measureDownload(
-      { ip: CF_PROBE_IP, port: 443, sni: sampleSni },
+      { ip: speedIp, port: 443, sni: sampleSni },
       { ...cfg, speedBytes: 300_000, speedTimeoutMs: 8000 },
       controller.signal,
     );
     checks.push({
-      name: 'throughput endpoint',
+      name: `throughput endpoint ${speedIp}`,
       ok: down.ok,
-      detail: down.ok ? `${down.mbps} Mbps over ${down.bytes} bytes` : `${down.error ?? 'failed'}`,
-      hint: down.ok ? undefined : 'speed.cloudflare.com is unreachable; set a custom speed URL that your line can reach',
+      detail: down.ok
+        ? `${down.mbps} Mbps over ${down.bytes} bytes`
+        : `${down.error ?? 'failed'} after ${down.bytes} bytes`,
+      hint: down.ok
+        ? undefined
+        : 'the speed endpoint did not deliver a transfer — set --speed-url to a URL your line can reach, or turn the speed phase off',
     });
   } catch (err) {
     checks.push({ name: 'throughput endpoint', ok: false, detail: (err as Error).message });

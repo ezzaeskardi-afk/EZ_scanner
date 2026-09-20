@@ -6,7 +6,7 @@ import { after, before, test } from 'node:test';
 import { DEFAULT_CANARIES } from '../src/core/ratelimit.ts';
 import { Scanner } from '../src/core/scanner.ts';
 import { DEFAULT_CONFIG, type IpResult, type ScanConfig } from '../src/core/types.ts';
-import { startFakeEdge, type FakeEdge } from './helpers/localnet.ts';
+import { startFakeEdge, startFakeTcp, type FakeEdge } from './helpers/localnet.ts';
 
 let edge: FakeEdge;
 let dataDir: string;
@@ -76,6 +76,31 @@ test('a scan probes the target list, keeps successes and finishes', async () => 
   assert.equal(result.httpStatus, 200);
   assert.equal(result.lossPct, 0);
   assert.ok(result.score > 50);
+});
+
+test('tcp mode does not demand the gates it never checks', async () => {
+  // `--mode tcp` is exactly what the CLI recommends for a hostile line, and `requireHttp`
+  // defaults to true. Scoring asked for an HTTP status the tcp probe never collects, so
+  // every reachable address came back unhealthy: a real sweep of 30 Cloudflare edges (90 ms,
+  // 0% loss) reported "30 reachable | 0 healthy", each row rejected as "HTTP check failed".
+  const tcp = await startFakeTcp();
+  try {
+    const scanner = makeScanner();
+    scanner.configure({ mode: 'tcp', requireHttp: true, requireWs: true, stabilityMs: 500, minDelayMs: 0 });
+    await scanner.start({ targets: [`127.0.0.1:${tcp.port}`], label: 'tcp mode' });
+
+    const stats = scanner.getStats();
+    const result = scanner.getResults('score', { includeFailures: true })[0];
+    assert.equal(
+      stats.healthy,
+      1,
+      `a reachable address is healthy in tcp mode (reasons: ${result?.reasons.join(', ') ?? 'none'})`,
+    );
+    assert.equal(result.httpStatus, 0, 'no HTTP check ran, and the verdict does not imply one');
+    assert.equal(result.wsOk, null, 'no WebSocket upgrade ran either');
+  } finally {
+    await tcp.close();
+  }
 });
 
 test('failures are not silently marked healthy', async () => {

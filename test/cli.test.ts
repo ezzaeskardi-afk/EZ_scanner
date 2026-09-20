@@ -60,10 +60,19 @@ test('an unknown preset lists the real ones', async () => {
     (err: unknown) => {
       const message = String((err as { stderr?: string }).stderr ?? '');
       assert.match(message, /unknown preset "nope"/);
-      for (const name of ['gentle', 'standard', 'fast', 'strict', 'iran']) {
+      for (const name of ['gentle', 'standard', 'fast', 'strict', 'iran', 'irancell', 'mci', 'mobin']) {
         assert.match(message, new RegExp(name), `the list must mention ${name}`);
       }
       return true;
     },
   );
+});
+
+test('a per-operator preset is accepted by name and by alias', async () => {
+  // The profile these apply is measured in test/operator-profiles.test.ts; here it only has
+  // to reach the CLI without an error and produce a runnable plan.
+  for (const name of ['irancell', 'mci', 'mobin', 'mtn', 'hamrah', 'mobinnet']) {
+    const out = await ezscan(['scan', '--preset', name, '--count', '20', '--dry-run']);
+    assert.match(out, /addresses \(ranges/, `--preset ${name} must produce a plan`);
+  }
 });

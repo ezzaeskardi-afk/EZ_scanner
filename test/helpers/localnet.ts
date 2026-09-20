@@ -22,6 +22,8 @@ export interface FakeEdgeOptions {
   downloadRate?: number;
   /** Reply with a broken (non-HTTP) payload. */
   garbage?: boolean;
+  /** Status the `/__up` endpoint answers with (default 200). */
+  uploadStatus?: number;
   /** Close the socket immediately after the TLS handshake. */
   silent?: boolean;
 }
@@ -69,7 +71,7 @@ export function startFakeEdge(opts: FakeEdgeOptions = {}): Promise<FakeEdge> {
         received += c.length;
       });
       req.on('end', () => {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.writeHead(opts.uploadStatus ?? 200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ received }));
       });
       return;

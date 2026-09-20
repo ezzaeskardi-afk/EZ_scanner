@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.5.0 — 2026-09-20
+
+Two of the fixes below came out of running the tool against a real line, and they were the
+actual reason a healthy line looked like a broken scanner: the mode the CLI recommends threw
+away every reachable address, and the speed phases reported error pages as transfers. The rest
+is the next step for the networks this tool is written for — a preset per operator, so the
+settings a given line needs are one word instead of a row of flags to remember.
+
+### Added
+- **Per-operator presets: `--preset irancell|mci|mobin`** (aliases `mtn`, `hamrah`,
+  `mobinnet`), so the settings a given network needs are one word instead of a row of flags to
+  remember. `irancell` and `mci` are the CGNAT shape (a cap on new sessions per second, black-
+  holed SYNs, DPI resets on MCI): 12 workers, a 40–60 ms pause, `rate 10–12`, three tries, a
+  6 s timeout, handshake-only. `mobin` is the cheap-PPPoE-ONU profile: a small sweep, plus a
+  longer speed budget because a broken PMTU stalls a large transfer. They are also buttons in
+  the GUI next to the existing presets. The numbers are not guesses —
+  `test/operator-profiles.test.ts` drives its per-operator runs *through `applyPreset()`*, so
+  changing a preset that a network can no longer take fails the suite.
+
+### Fixed
+- **`--mode tcp` declared every reachable address unhealthy.** The probe stops at the
+  handshake in tcp mode, but scoring still demanded the HTTP status it never collected (and
+  the same for the WebSocket gate and the idle hold), so each row was rejected with
+  `HTTP check failed`. A real sweep of 30 Cloudflare edges — 90 ms, 0% loss, `30 reachable` —
+  reported `0 healthy`, in exactly the mode the CLI recommends for a hostile line: its own
+  hint says "try `--mode tcp`". The protocol gates now judge only what the probe actually
+  did, which is what the CLI warning already promised.
+- **The speed phases counted error pages as transfers.** `measureDownload`/`measureUpload`
+  never read the HTTP status, so an error page was measured as a download: on a real line a
+  Cloudflare edge answering `403 error code: 1034` (with a ~8 KB HTML body) was reported as
+  `0.69 Mbps` and marked **ok**, and in a scan that number then ranked every address in the
+  phase the tool exists for. Only a 2xx is a transfer now; anything else fails with the
+  status (`HTTP 403`), so `ezscan doctor` shows a real number or a real reason.
+- `ezscan doctor` probed a hard-coded Cloudflare address with the SNI it was testing and with
+  the speed hostname, so its TLS/HTTP rows could pass against an edge that serves neither
+  (`HTTP 403 … ok`) and its throughput row measured the wrong endpoint entirely. Each row now
+  dials an address resolved for the name it tests, falling back to the old constant only when
+  the name does not resolve.
+
 ## 1.4.0 — 2026-09-20
 
 Release for the lines this tool exists for. The watchdog can no longer park a healthy scan
@@ -65,6 +104,20 @@ network instead of described.
   up), so the test replaces the canary *dial* (`NetworkWatchdog.dial`, and `Scanner` now
   accepts watchdog overrides) while the probe traffic, the session table and every result
   asserted stay real.
+- `test/operator-profiles.test.ts` — the same severe test run against the three access
+  networks the tool is written for, so the per-operator advice rests on numbers: **Irancell**
+  (CGNAT session slot + a new-session rate cap, black-holed SYNs), **MCI / Hamrah-e Aval**
+  (the same plus DPI resets) and **MobinNet fiber** (a cheap PPPoE ONU whose table, when
+  filled, drops the whole home for `outageMs`). Each asserts that the brutal profile is
+  *visible to the network* — the burst loses sessions to the rate cap, and on the fiber
+  profile it trips the ONU table and takes the line down — and that the profile the docs
+  recommend for that operator (12 workers, 40 ms pause, `rate 12`) gets the whole list with
+  nothing turned away and no outage. It prints the numbers:
+  `brutal: found 24/24 · peak 16 sessions · 8 turned away · 1 outages`, against
+  `recommended: found 24/24 · peak 1 · 0 turned away · 0 outages`.
+- `test/helpers/hostile-line.ts` gained `maxNewSessionsPerSec`, the per-second cap a CGNAT
+  slot enforces — the mechanism that turns a burst into timeouts on a line that is otherwise
+  fine, which a session *table* alone only models under sustained load.
 - `test/doctor.test.ts`: the block-page/private/CGNAT/IPv6 classification and the DoH
   response parsing (Cloudflare and Google both return `Answer[].data` with the A records
   typed 1, CNAME first).

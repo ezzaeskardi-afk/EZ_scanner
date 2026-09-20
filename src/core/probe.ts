@@ -226,6 +226,20 @@ function speedSni(target: ProbeTarget, url: URL, cfg: ScanConfig): string {
   return url.hostname;
 }
 
+/**
+ * The HTTP status of a response, or `null` when nothing HTTP-shaped arrived.
+ *
+ * The speed phases have to read it: an error page is only a few kilobytes, so counting
+ * whatever bytes arrive as a download reports a *green* transfer of nonsense (measured on
+ * a real line: `403 error code: 1034` from a Cloudflare edge the speed host is not served
+ * on — 8271 bytes read as "0.69 Mbps" and marked ok). That number then ranks every address
+ * in the speed phase, which is the phase the whole scan exists for.
+ */
+function statusOf(head: Buffer): number | null {
+  const match = /^HTTP\/1\.[01]\s+(\d{3})/.exec(head.toString('latin1'));
+  return match ? Number(match[1]) : null;
+}
+
 function resolveSpeedUrl(template: string, bytes: number): URL {
   const filled = template.replace('%BYTES%', String(bytes));
   try {
@@ -267,6 +281,30 @@ export async function measureDownload(
     const drained = await drainBytes(conn.socket, cfg.speedBytes, cfg.speedTimeoutMs, signal);
     if (drained.bytes <= 0) {
       return { ok: false, mbps: 0, bytes: 0, ms: drained.ms, ttfbMs: drained.firstByteMs, error: 'no data' };
+    }
+    // Only a 2xx is a transfer. Anything else is an error page (or a redirect body) whose
+    // size says nothing about the line, and reporting it as throughput would rank the
+    // addresses by it.
+    const status = statusOf(drained.head);
+    if (status === null) {
+      return {
+        ok: false,
+        mbps: 0,
+        bytes: drained.bytes,
+        ms: Math.round(drained.ms),
+        ttfbMs: Math.round(drained.firstByteMs),
+        error: 'no HTTP status line',
+      };
+    }
+    if (status < 200 || status >= 300) {
+      return {
+        ok: false,
+        mbps: 0,
+        bytes: drained.bytes,
+        ms: Math.round(drained.ms),
+        ttfbMs: Math.round(drained.firstByteMs),
+        error: `HTTP ${status}`,
+      };
     }
     // Throughput is measured from the first byte so the handshake/queueing
     // latency does not pollute the number.
@@ -324,9 +362,13 @@ export async function measureUpload(
     conn.socket.write(payload);
     const read = await readUntil(conn.socket, (d) => d.includes('\r\n\r\n'), cfg.speedTimeoutMs, signal);
     const elapsed = Date.now() - writeStart;
-    const responded = /^HTTP\/1\.[01]\s+\d{3}/.test(read.data.toString('latin1'));
-    if (!responded) {
+    // Same rule as the download: the payload only counts if the endpoint accepted it.
+    const status = statusOf(read.data);
+    if (status === null) {
       return { ok: false, mbps: 0, bytes, ms: elapsed, ttfbMs: 0, error: 'no response to upload' };
+    }
+    if (status < 200 || status >= 300) {
+      return { ok: false, mbps: 0, bytes, ms: elapsed, ttfbMs: 0, error: `HTTP ${status}` };
     }
     const mbps = (bytes * 8) / Math.max(elapsed, 1) / 1000;
     return {

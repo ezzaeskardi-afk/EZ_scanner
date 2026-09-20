@@ -20,12 +20,27 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { DEFAULT_CONFIG, applyPreset, type ScanConfig } from '../src/core/types.ts';
 
 const guiDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'gui');
 const html = readFileSync(join(guiDir, 'index.html'), 'utf8');
 const js = readFileSync(join(guiDir, 'app.js'), 'utf8');
 const css = readFileSync(join(guiDir, 'styles.css'), 'utf8');
 const report = readFileSync(join(guiDir, 'report.html'), 'utf8');
+
+test('every preset button resolves to a real preset', () => {
+  // The buttons post `data-preset` straight to /api/preset, so a preset that is renamed (or a
+  // button typed wrong) fails at runtime in the GUI and nowhere else.
+  const names = [...html.matchAll(/data-preset="([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(names.length >= 7, `expected every preset as a button, saw ${names.join(', ')}`);
+  for (const name of names) {
+    const preset = applyPreset(name);
+    assert.ok(preset, `data-preset="${name}" is not a preset`);
+    for (const key of Object.keys(preset as Partial<ScanConfig>)) {
+      assert.ok(key in DEFAULT_CONFIG, `preset ${name} sets an unknown config key: ${key}`);
+    }
+  }
+});
 
 /** The runtime string table in app.js, split into its top level and each nested group. */
 function stringsTable() {

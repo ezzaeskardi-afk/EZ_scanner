@@ -187,7 +187,12 @@ interface DrainResult {
   ms: number;
   firstByteMs: number;
   ended: boolean;
+  /** The first `HEAD_BYTES` of the stream, so the caller can read the status line. */
+  head: Buffer;
 }
+
+/** How much of the start of a stream is kept for inspection (a status line and headers). */
+const HEAD_BYTES = 1024;
 
 /** Counts bytes until `target` is reached, the socket ends, or the deadline passes. */
 export function drainBytes(
@@ -201,6 +206,8 @@ export function drainBytes(
     let bytes = 0;
     let firstByteMs = 0;
     let settled = false;
+    const head: Buffer[] = [];
+    let headBytes = 0;
     const cleanup = () => {
       clearTimeout(timer);
       socket.off('data', onData);
@@ -217,11 +224,17 @@ export function drainBytes(
         ms: Number(process.hrtime.bigint() - started) / 1e6,
         firstByteMs,
         ended: true,
+        head: Buffer.concat(head),
       });
     };
     const onData = (chunk: Buffer) => {
       if (!firstByteMs) firstByteMs = Number(process.hrtime.bigint() - started) / 1e6;
       bytes += chunk.length;
+      if (headBytes < HEAD_BYTES) {
+        const slice = chunk.subarray(0, HEAD_BYTES - headBytes);
+        head.push(slice);
+        headBytes += slice.length;
+      }
       if (bytes >= target) onDone();
     };
     const onAbort = () => onDone();

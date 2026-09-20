@@ -122,6 +122,41 @@ test('download measurement reports throughput in Mbps', async () => {
   await server.close();
 });
 
+test('an error page is not a download: the status decides', async () => {
+  // A Cloudflare edge that does not serve the speed host answers `403 error code: 1034`
+  // with a small HTML body. Counting those bytes used to produce a *green* transfer on a
+  // real line ("0.69 Mbps over 8271 bytes"), and that number ranked every address in the
+  // speed phase — the phase the scan exists for.
+  const server = await startFakeEdge({ status: 403 });
+  try {
+    const result = await measureDownload(
+      { ip: '127.0.0.1', port: server.port, sni: 'speed.example' },
+      { ...base, speedBytes: 300_000, speedTimeoutMs: 2000 },
+      controller.signal,
+    );
+    assert.equal(result.ok, false, `a 403 must not be a measurement (mbps=${result.mbps})`);
+    assert.equal(result.error, 'HTTP 403');
+    assert.equal(result.mbps, 0, 'no throughput may be derived from an error page');
+  } finally {
+    await server.close();
+  }
+});
+
+test('an upload the endpoint rejects is not throughput either', async () => {
+  const server = await startFakeEdge({ uploadStatus: 503 });
+  try {
+    const result = await measureUpload(
+      { ip: '127.0.0.1', port: server.port, sni: 'speed.example' },
+      { ...base, uploadBytes: 65_536, uploadUrl: `https://127.0.0.1:${server.port}/__up`, speedTimeoutMs: 4000 },
+      controller.signal,
+    );
+    assert.equal(result.ok, false, `a 503 must not be a measurement (mbps=${result.mbps})`);
+    assert.equal(result.error, 'HTTP 503');
+  } finally {
+    await server.close();
+  }
+});
+
 test('upload measurement reports throughput', async () => {
   const result = await measureUpload(
     { ip: '127.0.0.1', port: edge.port, sni: 'speed.example' },

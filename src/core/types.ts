@@ -311,10 +311,98 @@ export const PRESETS: Record<string, Partial<ScanConfig>> = {
     topN: 20,
     minScore: 60,
   },
+
+  /**
+   * Irancell (mobile, CGNAT). The operator caps *new sessions per second* per subscriber and
+   * black-holes the SYN past it, so the failure is a timeout on a line that is fine — not a
+   * dropped handshake (#56, #75). Hence: few workers, a global rate cap, one success needed,
+   * and a long timeout to survive the jitter. Handshake-only (`tcp`): the TLS/HTTP gates fail
+   * on this network for reasons that have nothing to do with the address. The numbers are the
+   * ones `test/operator-profiles.test.ts` runs against a model of the same network.
+   */
+  irancell: {
+    mode: 'tcp',
+    tries: 3,
+    minSuccesses: 1,
+    timeoutMs: 6000,
+    workers: 12,
+    requireHttp: false,
+    requireWs: false,
+    stabilityMs: 0,
+    maxLatencyMs: 2500,
+    maxLossPct: 60,
+    rateLimitPerSec: 12,
+    minDelayMs: 40,
+    adaptiveBackoff: true,
+    topN: 5,
+    minScore: 35,
+  },
+
+  /** MCI / Hamrah-e Aval: the same CGNAT shape, plus DPI resets on a burst (#58, #62). */
+  mci: {
+    mode: 'tcp',
+    tries: 3,
+    minSuccesses: 1,
+    timeoutMs: 6000,
+    workers: 12,
+    requireHttp: false,
+    requireWs: false,
+    stabilityMs: 0,
+    maxLatencyMs: 3000,
+    maxLossPct: 60,
+    rateLimitPerSec: 10,
+    minDelayMs: 60,
+    adaptiveBackoff: true,
+    topN: 5,
+    minScore: 35,
+  },
+
+  /**
+   * MobinNet fiber (PPPoE behind a cheap ONU). The ONU's table is small enough that a burst
+   * fills it and takes the whole home down until it recovers (#25, #96), and a broken PMTUD
+   * turns a large transfer into a stall — so the sweep stays small and the speed phase is
+   * given a longer budget instead of a smaller one.
+   */
+  mobin: {
+    mode: 'tcp',
+    tries: 2,
+    minSuccesses: 1,
+    timeoutMs: 6000,
+    workers: 12,
+    requireHttp: false,
+    requireWs: false,
+    stabilityMs: 0,
+    maxLatencyMs: 2500,
+    maxLossPct: 60,
+    rateLimitPerSec: 12,
+    minDelayMs: 40,
+    adaptiveBackoff: true,
+    speedBytes: 4_000_000,
+    speedTimeoutMs: 6000,
+    topN: 8,
+    minScore: 35,
+  },
+};
+
+/**
+ * Preset aliases: the names a user types for a network, mapped to the profile for it. The
+ * spellings with a dash or a space (`mobin-net`, `hamrah e aval`) work too — the key is
+ * normalised before lookup.
+ */
+const PRESET_ALIASES: Record<string, string> = {
+  iran: 'gentle',
+  ir: 'gentle',
+  irancell: 'irancell',
+  mtn: 'irancell',
+  mci: 'mci',
+  hamrah: 'mci',
+  hamraheaval: 'mci',
+  hamrahaval: 'mci',
+  mobin: 'mobin',
+  mobinnet: 'mobin',
 };
 
 export function applyPreset(name: string): Partial<ScanConfig> | null {
-  const key = name.trim().toLowerCase();
-  if (key === 'iran' || key === 'ir') return PRESETS.gentle;
-  return PRESETS[key] ?? null;
+  const key = name.trim().toLowerCase().replace(/[\s_-]/g, '');
+  return PRESETS[PRESET_ALIASES[key] ?? key] ?? null;
 }

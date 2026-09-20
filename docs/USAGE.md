@@ -67,6 +67,28 @@ When it finishes, the results table is populated. Read the *status* column:
 
 The **Gentle (Iran-friendly)** preset sets all of that at once.
 
+### Per-operator presets (`--preset irancell|mci|mobin`)
+
+Each one is the profile for a specific access network, and the numbers behind it are measured:
+`test/operator-profiles.test.ts` runs the preset against a model of that network and asserts
+it gets the whole list through while a 200-worker burst does not. Aliases work too (`mtn`,
+`hamrah`, `mobinnet`).
+
+| Preset | Network | What it protects against | Key settings |
+|---|---|---|---|
+| `irancell` | Irancell (mobile CGNAT) | The operator's cap on **new sessions per second** — past it the SYN is black-holed and every address looks like a timeout (#56, #75) | 12 workers, `--delay 40`, `--rate 12`, 3 tries, 6 s timeout, handshake-only |
+| `mci` | MCI / Hamrah-e Aval | The same CGNAT shape **plus DPI resets** on a burst (#58, #62) | 12 workers, `--delay 60`, `--rate 10` |
+| `mobin` | MobinNet fiber (PPPoE ONU) | The ONU's session table being filled — which takes the **whole home** down until the router recovers (#25, #96) | 12 workers, `--rate 12`, a longer speed budget (`speedTimeoutMs 6000`) because a broken PMTU stalls a large transfer |
+
+```bash
+ezscan scan --preset mci --count 2000 --sni my.sni.example --csv out.csv
+ezscan scan --preset mobin --count 5000 --no-speed --sni my.sni.example
+```
+
+If the line still struggles, halve the workers (`--workers 6`) before touching anything else:
+peak simultaneous sessions are roughly twice the worker count, and on a cheap ONU the table
+is what dies, not the scan.
+
 ---
 
 ## 4. Reading the failures

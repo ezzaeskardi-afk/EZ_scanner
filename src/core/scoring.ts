@@ -145,11 +145,21 @@ export function finalize(result: IpResult, cfg: ScanConfig, bestMbps = 0): IpRes
   if (result.successes > 0 && result.medianLatency > cfg.maxLatencyMs) {
     reasons.push(`median ${result.medianLatency}ms > ${cfg.maxLatencyMs}ms`);
   }
-  if ((cfg.mode === 'http' || cfg.requireHttp) && result.successes > 0 && !result.httpStatus) {
+  // The protocol gates can only judge what the probe actually did. `mode: tcp` stops at the
+  // handshake, so HTTP/WS/idle-hold results do not exist for it — and scoring them anyway
+  // rejected every reachable address in exactly the mode the CLI recommends for hostile
+  // lines (`--mode tcp` with `requireHttp` left at its default): a sweep of 30 reachable
+  // Cloudflare edges (90 ms, 0% loss) reported "30 reachable | 0 healthy", every row
+  // thrown out with "HTTP check failed". The CLI already warns that tcp ignores these
+  // gates; now the verdict agrees with it.
+  const talksHttp = cfg.mode !== 'tcp';
+  if (talksHttp && (cfg.mode === 'http' || cfg.requireHttp) && result.successes > 0 && !result.httpStatus) {
     reasons.push('HTTP check failed');
   }
-  if (cfg.requireWs && result.wsOk !== true) reasons.push('WebSocket upgrade failed');
-  if (cfg.stabilityMs > 0 && result.stable !== true) reasons.push(`connection dropped during ${cfg.stabilityMs}ms idle hold`);
+  if (talksHttp && cfg.requireWs && result.wsOk !== true) reasons.push('WebSocket upgrade failed');
+  if (talksHttp && cfg.stabilityMs > 0 && result.stable !== true) {
+    reasons.push(`connection dropped during ${cfg.stabilityMs}ms idle hold`);
+  }
   if (result.score < cfg.minScore) reasons.push(`score ${result.score} < ${cfg.minScore}`);
 
   result.healthy = reasons.length === 0;

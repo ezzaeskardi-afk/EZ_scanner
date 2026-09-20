@@ -19,7 +19,7 @@ import { createEzServer } from '../server/server.ts';
 import { runDoctor, runSelfTest } from '../server/doctor.ts';
 import { Output, RESULT_HEADERS, nextStepHints, printDoctor, resultRow } from './render.ts';
 
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 
 /* ───────────────────────────── arg parsing ───────────────────────────── */
 
@@ -487,7 +487,7 @@ scan options
   --count, -n <n>           how many addresses to draw (default 5000)
   --file <path> | --targets <path|list> | --domains <path|list>
   --config "<link>"         take SNI/port from your config, scan its domain
-  --preset fast|standard|strict|gentle
+  --preset fast|standard|strict|gentle|irancell|mci|mobin
   --mode tcp|tls|http       probe depth (default tls)
   --port <n> --sni <domain> --sni-pool a,b
   --tries <n> --min <n>     attempts per address / required successes

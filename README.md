@@ -112,6 +112,15 @@ Presets:
 | `standard` | tls | 3/2 | 50 | off | off | none |
 | `strict` | http | 4/3 | 40 | on | 1.5 s | none |
 | `gentle` (Iran-friendly) | tls | 2/1 | 20 | off | off | 12 conns/s + 40 ms delay |
+| `irancell` (mobile CGNAT) | tcp | 3/1 | 12 | off | off | 12 conns/s + 40 ms delay |
+| `mci` (Hamrah-e Aval) | tcp | 3/1 | 12 | off | off | 10 conns/s + 60 ms delay |
+| `mobin` (MobinNet fiber) | tcp | 2/1 | 12 | off | off | 12 conns/s + 40 ms delay |
+
+The last three are **per-operator** profiles: each one is measured against a model of that
+network (its session table, its cap on new sessions per second, its DPI resets) in
+`test/operator-profiles.test.ts`, and `--preset` takes the aliases `mtn`, `hamrah` and
+`mobinnet` too. [`docs/USAGE.md`](docs/USAGE.md) has the table of what each one protects
+against.
 
 ---
 
@@ -120,6 +129,7 @@ Presets:
 ```bash
 ezscan gui                                     # the GUI
 ezscan scan --preset gentle --count 2000 --sni my.sni.example --csv out.csv
+ezscan scan --preset mci --count 2000 --sni my.sni.example --csv out.csv   # per-operator preset
 ezscan scan --source config --config "vless://…" --speed --xlsx found.xlsx  # the config's own address
 ezscan scan --count 3000 --sni my.sni.example --speed --xlsx found.xlsx      # the ranges, that SNI
 ezscan scan --source paste --targets my-ips.txt --csv out.csv   # probe phase only
@@ -272,7 +282,7 @@ chart = BarChart(chartLabels, [chartSeries], "grouped", "latency bucket", "Addre
 
 ```bash
 npm run typecheck
-npm test                  # 132 tests: probe engine, gating, pause/resume, snapshots,
+npm test                  # 140 tests: probe engine, gating, pause/resume, snapshots,
                           # exports, HTTP API, OpenUI report, GUI contract, CLI, dead code,
                           # and integration runs against a fake hostile access network
 npm run check:openui-css  # the vendored OpenUI stylesheet is still minimal, complete and correctly pinned

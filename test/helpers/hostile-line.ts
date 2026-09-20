@@ -11,6 +11,10 @@
  *     table sends) or black-holed — and, as on a real line, an operator-style `outageMs`
  *     drops the whole line for a while, which is the "the connection dies and the router
  *     needs a restart" symptom of issues #25/#62/#96.
+ *   - **A cap on new sessions per second** (`maxNewSessionsPerSec`): the per-subscriber rate
+ *     a CGNAT slot enforces, and what a cheap ONU's CPU actually dies of. This is the one
+ *     that turns a burst into timeouts on a line that is otherwise healthy (#56, #75) —
+ *     the table only fills under sustained load, the rate cap trips on the first second.
  *   - **Delay and jitter** on every response, so "the timeout is tighter than the line" can
  *     be reproduced deliberately rather than by waiting for a bad day.
  *   - **An MTU/MSS blackhole**: the response headers and the first bytes arrive, the rest
@@ -31,6 +35,13 @@ export interface HostileLineOptions {
   overLimit?: 'refuse' | 'blackhole';
   /** Set to drop the whole line (every live session) for this long when the limit is hit. */
   outageMs?: number;
+  /**
+   * New sessions per second the access network will open (the CGNAT rate cap, and what a
+   * cheap ONU's CPU actually dies of). Past it a session is turned away the same way an
+   * over-limit one is — this is the mechanism that makes a mobile line time out while it
+   * is otherwise fine (`IR-MCI`/`Irancell` in docs/ISSUES.md #56/#58/#75).
+   */
+  maxNewSessionsPerSec?: number;
   /** Share of accepted sessions reset immediately (a real RST), as a DPI/NAT box does. */
   resetRate?: number;
   /** Fixed delay added to every response. */
@@ -50,6 +61,8 @@ interface HostileLineStats {
   accepted: number;
   /** Sessions turned away: over the limit, or while the line was down. */
   refused: number;
+  /** Sessions turned away by `maxNewSessionsPerSec` — the operator's rate cap, not the table. */
+  rateLimited: number;
   peakConcurrent: number;
   live: number;
   /** Times the whole line was dropped. */
@@ -82,6 +95,7 @@ export function startHostileLine(opts: HostileLineOptions): Promise<HostileLine>
   const stats: HostileLineStats = {
     accepted: 0,
     refused: 0,
+    rateLimited: 0,
     peakConcurrent: 0,
     live: 0,
     outages: 0,
@@ -95,6 +109,8 @@ export function startHostileLine(opts: HostileLineOptions): Promise<HostileLine>
   /** Every socket, so `close()` cannot leave a paused one behind. */
   const sockets = new Set<Socket>();
   let deadUntil = 0;
+  /** Timestamps of the sessions opened in the last second, for the rate cap. */
+  let openedAt: number[] = [];
 
   /**
    * A reset, not a polite FIN. `resetAndDestroy` is what makes the client see
@@ -170,6 +186,18 @@ export function startHostileLine(opts: HostileLineOptions): Promise<HostileLine>
       stats.refused += 1;
       reset(raw);
       return;
+    }
+    if (opts.maxNewSessionsPerSec) {
+      const now = Date.now();
+      openedAt = openedAt.filter((at) => now - at < 1000);
+      if (openedAt.length >= opts.maxNewSessionsPerSec) {
+        stats.rateLimited += 1;
+        stats.refused += 1;
+        if (opts.overLimit === 'blackhole') raw.pause(); // the SYN is accepted and forgotten
+        else reset(raw);
+        return;
+      }
+      openedAt.push(now);
     }
     if (live.size >= opts.sessionLimit) {
       stats.refused += 1;
