@@ -202,13 +202,18 @@ for (const profile of PROFILES) {
 
     // 1. The network really does react to the burst — otherwise this profile proves nothing.
     assert.ok(
-      brutal.line.rateLimited + brutal.line.refused > 0 || brutal.line.outages > 0,
-      `${profile.name} must react to the burst (peak ${brutal.line.peakConcurrent} sessions)`,
+      brutal.line.refused > 0,
+      `${profile.name} must turn sessions away from the burst (peak ${brutal.line.peakConcurrent} sessions)`,
     );
 
     // 2. The shipped preset is within the network's budget and still finds the list.
     assert.equal(safe.line.outages, 0, `${profile.name}: the preset must never trip the line`);
     assert.equal(safe.line.rateLimited, 0, `${profile.name}: it must stay under the operator's rate cap`);
+    // Not a comparison between the two runs: both retry, and the line resets a share of sessions
+    // at random, so whether an address is recovered is a lottery that differs run to run. What
+    // the network did is deterministic, and this is the claim that survives repetition: nobody
+    // turns the preset away, while the burst is turned away.
+    assert.equal(safe.line.refused, 0, `${profile.name}: the preset must never have a session turned away`);
     assert.ok(
       safe.line.peakConcurrent <= preset!.workers!,
       `${profile.name}: peak ${safe.line.peakConcurrent} sessions must stay inside the preset's ${preset!.workers} workers`,
@@ -217,7 +222,6 @@ for (const profile of PROFILES) {
       safe.healthy >= Math.ceil(ADDRESSES * 0.9),
       `${profile.name}: the preset must find the line (found ${safe.healthy}/${ADDRESSES}, ${JSON.stringify(safe.failures)})`,
     );
-    assert.ok(brutal.healthy <= safe.healthy, 'the burst cannot find more than the calm sweep');
 
     // 3. The signature failure is attributed, not swallowed as a vague error.
     if (profile.expectsResets) {

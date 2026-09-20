@@ -58,5 +58,11 @@ jobs:
             --title "EZ Scanner $VERSION" \
             --notes-file notes.md \
             "ez-scanner-${VERSION}.zip" SHA256SUMS.txt \
-          || gh release upload "$TAG" "ez-scanner-${VERSION}.zip" SHA256SUMS.txt --clobber
+          || {
+            # Re-running a tag (a fix on top, or workflow_dispatch) has to replace the notes
+            # too: `release upload` only swaps the assets, which left the published notes
+            # behind the changelog they were extracted from.
+            gh release upload "$TAG" "ez-scanner-${VERSION}.zip" SHA256SUMS.txt --clobber
+            gh release edit "$TAG" --title "EZ Scanner $VERSION" --notes-file notes.md
+          }
           gh release view "$TAG" --json tagName,isDraft,url --jq '.tagName + " " + (.isDraft|tostring) + " " + .url'
