@@ -5,6 +5,7 @@
  * nothing — is it the tool or my line?") without asking the user to read logs.
  */
 import { access, mkdir, writeFile, unlink } from 'node:fs/promises';
+import { sleep as settleMs } from '../core/events.ts';
 import { constants } from 'node:fs';
 import net from 'node:net';
 import { resolve } from 'node:path';
@@ -302,7 +303,11 @@ export async function measureLineSignature(
 
   // The follow-up: with everything closed, a table that had filled has room again. A cap on new
   // sessions per second does not care, which is the difference between "lower the workers"
-  // and "lower the rate".
+  // and "lower the rate". The question is only fair after the closed sessions are actually gone:
+  // a table frees a slot when the teardown lands, not when the client stops using it, and asking
+  // in the same tick reads a busy table as a rate cap (measured on Linux CI, where the socket
+  // closes had not been processed yet when the follow-up connect arrived).
+  await settleMs(250, signal);
   let followUp: LineSignature['followUp'] = 'other';
   try {
     const conn = await tcpConnect(target.ip, target.port, { timeoutMs: connectTimeoutMs, signal });
