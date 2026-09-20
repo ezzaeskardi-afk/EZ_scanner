@@ -60,6 +60,24 @@ test('tcp mode only needs the handshake', async () => {
   await server.close();
 });
 
+test('a refused handshake is attributed to TLS, not to "other"', async () => {
+  // OpenSSL errors arrive with no `code` at all, so the text is the only clue: a real sweep of 60
+  // edges reported `other: 81` for what was entirely a wrong/missing SNI. A plain-text server is
+  // the same shape from the client's side (the record header is not TLS).
+  const plain = await startFakeTcp();
+  try {
+    const attempt = await probeOnce(
+      { ip: '127.0.0.1', port: plain.port, sni: 'hostile.line' },
+      { ...base, mode: 'tls', requireHttp: false },
+      controller.signal,
+    );
+    assert.equal(attempt.ok, false);
+    assert.equal(attempt.error, 'tls', `saw ${attempt.error}: ${attempt.errorMessage}`);
+  } finally {
+    await plain.close();
+  }
+});
+
 test('closed port is reported as a failure, not a crash', async () => {
   const attempt = await probeOnce({ ip: '127.0.0.1', port: closedPort, sni: '' }, base, controller.signal);
   assert.equal(attempt.ok, false);

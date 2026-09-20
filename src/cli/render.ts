@@ -126,6 +126,17 @@ export function printDoctor(out: Output, report: DoctorReport): void {
     out.line(`${check.ok ? out.paint('green', '[ OK ]') : out.paint('red', '[FAIL]')} ${check.name} — ${check.detail}`);
     if (check.hint) out.line(`        ${out.paint('dim', `→ ${check.hint}`)}`);
   }
+  if (report.recommendation?.preset) {
+    out.line('');
+    out.line(out.paint('yellow', `! This line has a signature — run it with --preset ${report.recommendation.preset}`));
+    for (const reason of report.recommendation.reasons) out.line(`  ${reason}`);
+    out.line(
+      out.paint(
+        'dim',
+        `  → ezscan scan --preset ${report.recommendation.preset} --source cloudflare --count 200`,
+      ),
+    );
+  }
   if (report.dnsHijack) {
     const hijack = report.dnsHijack;
     out.line('');

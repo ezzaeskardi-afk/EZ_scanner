@@ -76,13 +76,33 @@ it gets the whole list through while a 200-worker burst does not. Aliases work t
 
 | Preset | Network | What it protects against | Key settings |
 |---|---|---|---|
-| `irancell` | Irancell (mobile CGNAT) | The operator's cap on **new sessions per second** — past it the SYN is black-holed and every address looks like a timeout (#56, #75) | 12 workers, `--delay 40`, `--rate 12`, 3 tries, 6 s timeout, handshake-only |
-| `mci` | MCI / Hamrah-e Aval | The same CGNAT shape **plus DPI resets** on a burst (#58, #62) | 12 workers, `--delay 60`, `--rate 10` |
-| `mobin` | MobinNet fiber (PPPoE ONU) | The ONU's session table being filled — which takes the **whole home** down until the router recovers (#25, #96) | 12 workers, `--rate 12`, a longer speed budget (`speedTimeoutMs 6000`) because a broken PMTU stalls a large transfer |
+| `irancell` | Irancell (mobile CGNAT) | The operator's cap on **new sessions per second** — past it the SYN is black-holed and every address looks like a timeout (#56, #75) | 12 workers, `--delay 40`, `--rate 12`, 3 tries, 6 s timeout, retries 250 ms apart, recovery pass on |
+| `mci` | MCI / Hamrah-e Aval | The same CGNAT shape **plus DPI resets** on a burst (#58, #62) | 12 workers, `--delay 60`, `--rate 10`, retries 350 ms apart (this line kills a session it has just seen) |
+| `mobin` | MobinNet fiber (PPPoE ONU) | The ONU's session table being filled — which takes the **whole home** down until the router recovers (#25, #96) | 12 workers, `--rate 12`, retries 150 ms apart, a longer speed budget (`speedTimeoutMs 6000`) because a broken PMTU stalls a large transfer |
+
+All three probe with a **TLS handshake** (`--mode tls`), not a bare connect. On these networks a
+blocked or throttled path still completes the TCP handshake — the operator drops the payload, not
+the SYN — so `tcp` reported blocked addresses as healthy (measured: 40/40 "healthy" on a line that
+was refusing sessions, against 11/40 honest ones). A handshake is also the thing your tunnel needs
+before it can carry anything, so what survives it is what you can actually use. If even the
+handshake is blocked on your line, `--mode tcp` is the escape hatch — expect it to list addresses
+that only prove the port is open.
+
+Two mechanisms keep the addresses the line takes away:
+
+- **Retries are spaced** (`--retry-gap`, 150–350 ms in the presets). Three attempts sent back to
+  back are three sessions inside one throttle window and fail for the same reason; under a 4/s cap
+  on the test line, tight retries found 4 of 24 addresses where spaced ones found 21.
+- **A recovery pass** (`recoveryPass` in the presets, `--no-recovery` to disable) re-probes the
+  addresses the line itself turned away (*timeout*/`reset`/`refused` — not ones that answered
+  wrongly and will answer the same way again), once the window has passed, with a fresh record so
+  the outage is not charged to the address. Against the harness line with a 3-second block over a
+  4-second sweep: irancell 13/40 → 37/40, mci 20/40 → 35/40, mobin 11/40 → 40/40.
 
 ```bash
 ezscan scan --preset mci --count 2000 --sni my.sni.example --csv out.csv
 ezscan scan --preset mobin --count 5000 --no-speed --sni my.sni.example
+ezscan scan --preset irancell --no-recovery --retry-gap 0   # back to the plain sweep
 ```
 
 If the line still struggles, halve the workers (`--workers 6`) before touching anything else:
@@ -192,6 +212,12 @@ ezscan selftest    # probes a few real edges and says whether the line or the se
 - `doctor` fails → the line/network is at fault (DNS, blocking, outage).
 - `doctor` is clean but `selftest` is not → TLS is probably being interfered with on your
   line; try `--mode tcp` and another SNI.
+- `doctor` names a preset → run the scan with it. The `line signature` row measures what the
+  line does (how many sessions it lets you hold at once, whether they are killed mid-flight,
+  whether a large transfer stops moving) and `recommended preset` turns that into one word:
+  `--preset irancell` for a line that caps new sessions, `mci` for one that resets them,
+  `mobin` for fiber whose transfer stalls. No operator behaviour found means `--preset
+  standard` is fine.
 - `selftest` is green but your scan is not → the gates are strict: `minScore` to `0`, WS and
   idle off, and the Gentle preset.
 

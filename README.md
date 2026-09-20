@@ -3,7 +3,7 @@
 **Find clean Cloudflare IPs for SNI-fronted tunnels — with a real GUI and a complete CLI.**
 Clean-IP discovery for Cloudflare fronted tunnels (vless / vmess / trojan / BPB style), with a local GUI, a scriptable CLI, resumable scans and honest diagnostics.
 
-[![tests](https://img.shields.io/badge/tests-119%20passing-brightgreen)](#tests)
+[![tests](https://img.shields.io/badge/tests-155%20passing-brightgreen)](#tests)
 [![node](https://img.shields.io/badge/node-%E2%89%A522.18-blue)](#install)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
@@ -112,15 +112,22 @@ Presets:
 | `standard` | tls | 3/2 | 50 | off | off | none |
 | `strict` | http | 4/3 | 40 | on | 1.5 s | none |
 | `gentle` (Iran-friendly) | tls | 2/1 | 20 | off | off | 12 conns/s + 40 ms delay |
-| `irancell` (mobile CGNAT) | tcp | 3/1 | 12 | off | off | 12 conns/s + 40 ms delay |
-| `mci` (Hamrah-e Aval) | tcp | 3/1 | 12 | off | off | 10 conns/s + 60 ms delay |
-| `mobin` (MobinNet fiber) | tcp | 2/1 | 12 | off | off | 12 conns/s + 40 ms delay |
+| `irancell` (mobile CGNAT) | tls | 3/1 | 12 | off | off | 12 conns/s + 40 ms delay, retries 250 ms apart, recovery pass |
+| `mci` (Hamrah-e Aval) | tls | 3/1 | 12 | off | off | 10 conns/s + 60 ms delay, retries 350 ms apart, recovery pass |
+| `mobin` (MobinNet fiber) | tls | 2/1 | 12 | off | off | 12 conns/s + 40 ms delay, retries 150 ms apart, recovery pass |
 
 The last three are **per-operator** profiles: each one is measured against a model of that
 network (its session table, its cap on new sessions per second, its DPI resets) in
 `test/operator-profiles.test.ts`, and `--preset` takes the aliases `mtn`, `hamrah` and
 `mobinnet` too. [`docs/USAGE.md`](docs/USAGE.md) has the table of what each one protects
 against.
+
+They probe with a **TLS handshake** rather than a bare connect, because on these networks a
+blocked path still completes the TCP handshake: measured against the harness line, `tcp` called
+40 of 40 addresses healthy while the line was refusing every session, where `tls` called the 11
+that were actually reachable. They also space their retries (`--retry-gap`) and **retry the
+addresses the line itself turned away** once the window has passed (`--no-recovery` to disable);
+the same line, blocked for three seconds mid-sweep, went from 13/40 to 37/40 addresses found.
 
 ---
 
@@ -137,6 +144,7 @@ ezscan resume a1b2c3d4                         # continue a session
 ezscan sessions                                # list sessions
 ezscan export a1b2c3d4 --format links --link-template "vless://…" --out links.txt
 ezscan doctor                                  # DNS (tampering included) /TCP/TLS/HTTP/throughput
+                                              # + the line's signature and the preset it needs
 ezscan selftest                                # "is it my line or my settings?"
 ezscan config "vless://…"                      # SNI/port/transport of a config
 ezscan scan --help                             # every option
@@ -219,7 +227,8 @@ exact address, even after a reboot.
 **I get no IPs at all.** Run `ezscan doctor`, then `ezscan selftest`; the output says whether
 the line or the gates are at fault. If selftest is green, set `minScore` to `0` and keep
 WS/idle off. If doctor flags the resolver, the line is rewriting DNS answers: scan by IP
-(the Cloudflare or Paste source) instead of by domain.
+(the Cloudflare or Paste source) instead of by domain. And if doctor names a preset, that is
+the answer: `ezscan scan --preset <name>` uses the settings that line needs.
 
 **Why does the measured speed differ from my tunnel?** The probe measures the direct path to
 the edge (no proxy) and is meant for **ranking** IPs. Judge the final number inside your
@@ -240,9 +249,10 @@ src/
   gui/       build-free UI (plain HTML/CSS/JS, English-only) + vendor/openui
   cli/       command line
 scripts/     maintenance tooling: OpenUI style pruning (no build step, gated in CI)
-test/        119 tests: probe against a local TLS server, stop/resume, snapshots, API and
+test/        155 tests: probe against a local TLS server, stop/resume, snapshots, API and
              security, exports, the OpenUI report, the HTML/CSS/JS contract, the CLI run as
-             a user runs it, the dead-code / version / pruned-stylesheet gates
+             a user runs it, the line-signature measurement that names a preset, the
+             dead-code / version / pruned-stylesheet gates
 ```
 
 Design philosophy: **no runtime dependencies** (only devDependencies for type checking),
@@ -282,7 +292,7 @@ chart = BarChart(chartLabels, [chartSeries], "grouped", "latency bucket", "Addre
 
 ```bash
 npm run typecheck
-npm test                  # 140 tests: probe engine, gating, pause/resume, snapshots,
+npm test                  # 155 tests: probe engine, gating, pause/resume, snapshots,
                           # exports, HTTP API, OpenUI report, GUI contract, CLI, dead code,
                           # and integration runs against a fake hostile access network
 npm run check:openui-css  # the vendored OpenUI stylesheet is still minimal, complete and correctly pinned

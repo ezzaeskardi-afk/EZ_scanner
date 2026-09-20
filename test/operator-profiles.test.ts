@@ -184,7 +184,11 @@ for (const profile of PROFILES) {
     assert.ok(preset, `--preset ${profile.preset} must exist`);
     assert.ok((preset!.workers ?? 0) <= ADDRESSES / 3, 'an operator preset stays well inside a home ONU budget');
     assert.ok((preset!.rateLimitPerSec ?? 0) > 0, 'and it caps the session rate: workers alone cannot');
-    assert.equal(preset!.mode, 'tcp', 'the shipped preset is handshake-only, the kindest mode for a session table');
+    // Not a bare TCP connect: on these networks a blocked path still completes the handshake, so
+    // `tcp` reported blocked addresses as healthy. The preset asks for a TLS handshake, which is
+    // also the thing the user's tunnel needs before it can carry anything.
+    assert.equal(preset!.mode, 'tls', 'the shipped preset proves a handshake, not just a connect');
+    assert.ok(preset!.recoveryPass, 'and it retries what the line turned away, once the window has passed');
 
     const brutal = await run(profile, BRUTAL);
     // The preset's own numbers (workers/rate/delay/tries), deliberately driven in the held

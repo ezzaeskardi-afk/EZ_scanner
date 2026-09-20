@@ -1,5 +1,85 @@
 # Changelog
 
+## 1.6.0 — 2026-09-20
+
+This release is about *usable* addresses. `ezscan doctor` now measures what the line does to a
+burst, to repeated handshakes and to a large transfer, and names the preset that fits — so the
+per-operator profiles stop being something to guess at. Those profiles also stop reporting
+blocked addresses as healthy, and stop losing the addresses a block or a throttle caught
+mid-sweep: measured against a line that was refusing every session, `tcp` called 40 of 40
+addresses healthy where a handshake called the 11 that were real, and the same line blocked for
+three seconds mid-sweep went from 13 of 40 addresses found to 37. Two smaller verdicts came out
+of the same work: a transfer that stops moving is no longer reported as throughput, and a
+refused handshake is no longer filed under "other".
+
+### Changed
+- **The per-operator presets probe with a TLS handshake, not a bare connect** (`mode: tcp` →
+  `tls`), because on these networks a blocked or throttled path still completes the TCP
+  handshake — the operator drops the payload, not the SYN. Measured against the harness line,
+  while it was refusing every session: `tcp` reported **40/40 healthy**, `tls` reported the 11
+  that were actually reachable. That is the difference between a list of addresses and a list of
+  *usable* ones, and a handshake is what the user's tunnel needs before anything can be carried.
+  `--mode tcp` stays available as the escape hatch for a line that blocks the ClientHello itself,
+  with its meaning spelled out (the port answered, nothing more).
+- **Retries are spaced out and the addresses the line took away are retried once it has passed.**
+  Three attempts sent back to back are three sessions inside one throttle window and fail for the
+  same reason: under a 4/s cap on the harness line, back-to-back retries found 4 of 24 addresses
+  where 400 ms apart found 21. And a block or a throttle lasts seconds, so an address probed
+  inside it lost its whole `tries` budget for a reason that had nothing to do with the address.
+  The new **recovery pass** re-probes those (only `timeout`/`reset`/`refused` — an address that
+  answered wrongly answers the same way again) after the sweep, with a **fresh record** so the
+  outage is not charged to it as loss. Against the harness line with a 3 s block over a 4 s
+  sweep: irancell 13/40 → **37/40**, mci 20/40 → **35/40**, mobin 11/40 → **40/40**. New flags:
+  `--retry-gap <ms>`, `--no-recovery`; the presets ship 150–350 ms and the pass on.
+
+### Fixed
+- **A refused TLS handshake was reported as `other`.** OpenSSL failures arrive with no `code` at
+  all, so the text is the only clue, and a real sweep of 60 Cloudflare edges reported
+  `other: 81` for what was entirely a wrong/missing SNI. Those attempts are attributed to `tls`
+  now, and the CLI's hint says what to do about it (paste your config, or set the SNI your tunnel
+  uses) instead of suggesting `--mode tcp`.
+
+### Added
+- **`ezscan doctor` now measures the line's signature and names the preset for it**, so the
+  per-operator presets stop being something to guess at. Three mechanisms are measured on the
+  edge the SNI already resolves to, none of which needs root:
+  - **How many sessions the line lets you hold.** Twelve sessions are opened at once and *held*,
+    which is the only way a session table notices anything, and six real probes run on top of
+    them. A session accepted by a full table completes its TCP — and even its TLS — handshake and
+    then never reads the request, so a bare connect sees nothing; the probes are what time out
+    (`12 sessions at once · 7 connected · 5 turned away`).
+  - **Whether connections die without concurrency**, as the control: two probes on an idle line.
+    Resets here mean DPI is killing them, not that the line is capped.
+  - **Whether a large transfer stops moving.** The stall now has its own verdict rather than being
+    read as throughput: a transfer that goes quiet for 1.5s without finishing fails with
+    `the transfer stalled after N bytes (no data for Ns)`, which is the PPPoE/PMTU signature. That
+    also fixes a speed phase that ranked addresses by a number produced by a stuck transfer.
+
+  The verdict is one word — `--preset irancell` for a line that caps concurrency or new sessions
+  (and the reason says which, since that is the difference between lowering `--workers` and
+  lowering `--rate`), `--preset mci` for one that resets connections on its own, `--preset mobin`
+  for fiber whose transfer stalls. A line with none of these is told so, and keeps `standard`.
+  Both the CLI (`! This line has a signature …` plus a ready-to-paste command) and the GUI show it.
+
+### Fixed
+- **A stalled transfer is no longer reported as a slow one.** `drainBytes` hardcoded `ended: true`,
+  so the deadline was indistinguishable from a completed transfer: a response that stalled 32 KB in
+  reported `ok` with a real-looking Mbps, and in a scan that number then ranked addresses in the
+  phase the tool exists for. It now reports which of the two happened, and how long the stream had
+  been silent.
+
+### Tests
+- `test/doctor-signature.test.ts` — the classifier pinned as a pure function (stall → `mobin`,
+  idle resets → `mci`, a capped burst → `irancell`, with the `--workers`/`--rate` distinction, and
+  one reset staying indistinguishable from noise), plus the measurement itself driven against the
+  same fake access network the presets are tested with.
+
+  Two limits of the model, both now written down where they are relied on: a **black hole cannot
+  be reproduced on loopback** (no RTT, and node's TLS layer reads at the handle level, so the
+  request is already buffered by the time any handler runs and the session *is* answered), so tests
+  that need the client to observe a turned-away session use a real RST instead; and a session table
+  is invisible to a bare TCP connect, which is why the probes run on top of the held burst.
+
 ## 1.5.0 — 2026-09-20
 
 Two of the fixes below came out of running the tool against a real line, and they were the

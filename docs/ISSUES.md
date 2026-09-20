@@ -44,6 +44,11 @@ lines the scan also looked frozen.
   silent.
 - The **gentle** preset exists precisely for MCI/Shatel/Irancell lines: 2 tries,
   1 required success, 20 workers, 12 connections/s, 40 ms delay.
+- The per-operator presets add two things this complaint needs: retries are **spaced**
+  (`--retry-gap`, 150–350 ms) instead of landing in the same throttle window, and a
+  **recovery pass** re-probes the addresses the line turned away once the window has passed,
+  with a fresh record so an outage is not charged to the address. Same line, blocked for 3 s
+  mid-sweep: **13/40 → 37/40** addresses found (see `test/recovery-pass.test.ts`).
 
 ---
 
@@ -165,3 +170,4 @@ writer is unit-tested (`test/export.test.ts`).
 | #70 "BPB note" | The config builder turns discovered addresses into ready BPB/v2ray links; scanning a BPB fronting domain works through the "config" source |
 | #86/#86-like "which IP is best?" | Score (0–100) mixing latency, loss, DPI survival, HTTP validity and throughput + sortable columns |
 | "is it my line or the tool?" | `ezscan doctor` (DNS/TCP/TLS/HTTP/speed checks with hints; the DNS check flags block-page answers and compares the system resolver against DNS-over-HTTPS) and `ezscan selftest` (probes real edges and prints a verdict) |
+| "which preset does my line need?" | `ezscan doctor` measures the line's signature — sessions turned away under a held burst, connections reset with nothing else open, and a large transfer that stops moving — and names the preset for it (see #25, #56, #58, #96). Nothing detected means no operator preset is needed |

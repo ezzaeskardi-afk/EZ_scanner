@@ -434,6 +434,7 @@ export class Scanner extends Emitter<ScannerEvents> {
           recordAttempt(result, probed);
           this.backoff.record(probed.ok);
           if (this.config.earlyExit && result.successes >= need) break;
+          if (attempt + 1 < tries) await this.pauseBetweenTries(attempt + 1, tries, result.successes === 0);
         }
         this.stats.inflight -= 1;
         // Stopped mid-probe with nothing to show: that is not a failure, and the address
@@ -487,6 +488,97 @@ export class Scanner extends Emitter<ScannerEvents> {
     this.log('info', `probing ${total} addresses with ${workers} workers (timeout ${this.config.timeoutMs}ms, tries ${this.config.tries})`);
     await Promise.all(Array.from({ length: workers }, () => worker()));
     if (inflight.size) this.cursor = Math.min(this.cursor, Math.min(...inflight));
+    await this.recoveryProbe();
+  }
+
+  /**
+   * The wait before another attempt at the same address, jittered so a fleet of workers does not
+   * retry in lockstep. A retry sent a few milliseconds after the first one is the *same* session
+   * to a rate cap or a DPI box as far as the line is concerned, and fails for the same reason.
+   */
+  private async pauseBetweenTries(attempt: number, tries: number, recovering: boolean): Promise<void> {
+    const base = this.config.betweenTriesMs;
+    if (base <= 0) return;
+    // Later attempts and a first attempt that already failed wait longer: the point is to outlive
+    // the window that just refused us, not to round the number down.
+    const scaled = base * (recovering ? 1 : attempt / Math.max(1, tries - 1));
+    const jitter = Math.random() * (base / 2);
+    await sleep(Math.round(scaled + jitter), this.abort.signal);
+  }
+
+  /**
+   * One more chance for the addresses the *line* turned away.
+   *
+   * A block or a throttle lasts seconds, and every attempt an address gets inside that window
+   * fails for a reason that has nothing to do with the address. Spending the sweep's whole
+   * `tries` budget inside the window loses it until the next scan, which is the difference
+   * between finding 11 of 40 and finding all of them (measured against the harness line: a
+   * three-second block, 29 addresses probed inside it).
+   *
+   * Only the network's kinds are retried: `timeout`/`reset`/`refused` say "the line would not
+   * carry this right now", while `http`/`tls`/`dns` say "this address does not serve what you
+   * asked for" and will not change on a retry. The retry gets a **fresh** record so the outage is
+   * not charged to the address as loss, and a failed retry leaves the original verdict intact.
+   */
+  private async recoveryProbe(): Promise<void> {
+    if (!this.config.recoveryPass || this.abort.signal.aborted) return;
+    const NETWORK_KINDS = new Set(['timeout', 'reset', 'refused']);
+    const candidates: Array<{ ip: string; port: number }> = [];
+    const seen = new Set<string>();
+    for (const failure of this.failures) {
+      const kinds = Object.keys(failure.errorKinds ?? {});
+      if (!kinds.some((kind) => NETWORK_KINDS.has(kind))) continue;
+      const key = resultKey(failure.ip, failure.port);
+      if (seen.has(key) || this.results.has(key)) continue;
+      seen.add(key);
+      candidates.push({ ip: failure.ip, port: failure.port });
+    }
+    if (!candidates.length) return;
+
+    const workers = Math.max(1, Math.min(4, this.config.workers));
+    const gap = Math.max(150, this.config.minDelayMs);
+    this.log(
+      'info',
+      `retrying ${candidates.length} addresses the line turned away (${workers} workers, ${gap}ms apart)`,
+    );
+    this.stats.message = `retrying ${candidates.length} addresses the line turned away…`;
+    this.emit('progress', this.getStats());
+
+    const recovered: string[] = [];
+    await runPool(candidates, workers, async (candidate) => {
+      if (this.abort.signal.aborted) return;
+      while (this.paused && !this.abort.signal.aborted) await sleep(150, this.abort.signal);
+      if (this.config.autoPauseOnNetworkLoss && this.watchdog.state.offline) {
+        const back = await this.watchdog.waitUntilOnline(this.abort.signal);
+        if (!back) return;
+      }
+      const result = createResult(candidate.ip, candidate.port, this.config.sni);
+      const sni = this.pickSni(0);
+      const probed = await probeOnce({ ip: candidate.ip, port: candidate.port, sni }, this.config, this.abort.signal, sni);
+      if (this.abort.signal.aborted && !probed.ok) return;
+      recordAttempt(result, probed);
+      this.backoff.record(probed.ok);
+      if (!probed.ok) return;
+      finalize(result, this.config);
+      if (!result.healthy) return;
+      result.recovered = true;
+      this.results.set(resultKey(result.ip, result.port), result);
+      this.stats.healthy += 1;
+      this.stats.ok = this.results.size;
+      recovered.push(resultKey(result.ip, result.port));
+      this.emit('result', result);
+      await sleep(gap, this.abort.signal);
+    });
+
+    if (recovered.length) {
+      // The address is on the results list now; it is not a failure to explain any more.
+      const kept = this.failures.filter((f) => !recovered.includes(resultKey(f.ip, f.port)));
+      this.failures.length = 0;
+      this.failures.push(...kept);
+      this.log('ok', `recovered ${recovered.length} address${recovered.length === 1 ? '' : 'es'} the line had turned away`);
+    }
+    this.stats.message = '';
+    this.emit('progress', this.getStats());
   }
 
   private async speedPhase(): Promise<void> {

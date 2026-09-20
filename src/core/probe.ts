@@ -37,6 +37,11 @@ function mapError(err: unknown, elapsedMs: number): ProbeAttempt {
   const code = (err as NodeJS.ErrnoException)?.code;
   const message = (err as Error)?.message ?? String(err);
   if (err instanceof AbortedError) return { ok: false, latencyMs: elapsedMs, error: 'aborted', errorMessage: 'aborted' };
+  // OpenSSL failures often arrive with no `code` at all — the text is the only clue. An edge
+  // that answers a ClientHello with `ssl/tls alert handshake failure` (a wrong or missing SNI,
+  // a TLS version the edge refuses) used to be filed as `other`, which told the user nothing:
+  // a real sweep of 60 edges reported `other: 81` for what was entirely an SNI problem.
+  const sslText = /ssl|tls alert|handshake (failure|failed)|alert handshake/i.test(message);
   const kind: ProbeErrorKind =
     err instanceof TimeoutError
       ? 'timeout'
@@ -46,10 +51,10 @@ function mapError(err: unknown, elapsedMs: number): ProbeAttempt {
           ? 'reset'
           : code === 'ENOTFOUND' || code === 'EAI_AGAIN'
             ? 'dns'
-            : code?.startsWith('ERR_TLS') || code === 'CERT_HAS_EXPIRED' || code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE'
+            : code?.startsWith('ERR_TLS') || code?.startsWith('ERR_SSL') || sslText
               ? 'tls'
-              : code === 'EHOSTUNREACH' || code === 'ENETUNREACH'
-                ? 'other'
+              : code === 'CERT_HAS_EXPIRED' || code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE'
+                ? 'tls'
                 : 'other';
   return { ok: false, latencyMs: elapsedMs, error: kind, errorMessage: message };
 }
@@ -213,8 +218,18 @@ interface SpeedResult {
   bytes: number;
   ms: number;
   ttfbMs: number;
+  /** The transfer stopped moving rather than being slow (`error` explains how long it was quiet). */
+  stale?: boolean;
+  idleMs?: number;
   error?: string;
 }
+
+/**
+ * How long a transfer has to be silent before it counts as stuck rather than slow. A pipe
+ * that is merely narrow keeps delivering, so a gap this long means the path stopped
+ * forwarding the response, not that the line is congested.
+ */
+const STALL_IDLE_MS = 1500;
 
 /**
  * The throughput endpoints live on their own host, and a Cloudflare edge only
@@ -304,6 +319,23 @@ export async function measureDownload(
         ms: Math.round(drained.ms),
         ttfbMs: Math.round(drained.firstByteMs),
         error: `HTTP ${status}`,
+      };
+    }
+    // A transfer that ran out of deadline while the stream had gone silent is not a slow
+    // line, it is a stuck one — the signature a PPPoE line with a broken PMTUD leaves when
+    // the response is bigger than the path MTU. Counting it as throughput reports a real
+    // number for an imaginary transfer, which is worse than failing: on fiber this number
+    // then decides the ranking of the whole speed phase.
+    if (!drained.ended && drained.idleMs >= STALL_IDLE_MS) {
+      return {
+        ok: false,
+        mbps: 0,
+        bytes: drained.bytes,
+        ms: Math.round(drained.ms),
+        ttfbMs: Math.round(drained.firstByteMs),
+        stale: true,
+        idleMs: Math.round(drained.idleMs),
+        error: `the transfer stalled after ${drained.bytes} bytes (no data for ${Math.round(drained.idleMs / 100) / 10}s)`,
       };
     }
     // Throughput is measured from the first byte so the handshake/queueing

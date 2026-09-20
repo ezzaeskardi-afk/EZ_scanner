@@ -88,6 +88,18 @@ export interface ScanConfig {
   stabilityMs: number;
   /** Stop trying an address as soon as `minSuccesses` is reached (big speed win). */
   earlyExit: boolean;
+  /**
+   * Pause between two attempts at the same address, jittered by up to half of it. A retry sent
+   * a few milliseconds after the first one lands in the same throttle window and fails for the
+   * same reason; spacing them lets the operator's per-second budget refill. 0 = back to back.
+   */
+  betweenTriesMs: number;
+  /**
+   * One more, gentler chance for addresses the *line* turned away (timeout/reset — not the ones
+   * that answered wrongly), after the sweep is over and the throttle window has passed. The
+   * retry gets a fresh record, because the failures belonged to the line, not to the address.
+   */
+  recoveryPass: boolean;
   /** Address family filter. 0 = both. */
   family: 4 | 6 | 0;
 
@@ -143,6 +155,11 @@ export interface IpResult {
   lastError?: string;
   score: number;
   healthy: boolean;
+  /**
+   * Found by the recovery pass — the first sweep was refused by the line itself, not by the
+   * address. Shown so a reader knows the address took a second, gentler pass to appear.
+   */
+  recovered?: boolean;
   /** Machine-readable rejection reasons, e.g. `loss 60% > 50%`. */
   reasons: string[];
   firstSeenAt: number;
@@ -225,6 +242,8 @@ export const DEFAULT_CONFIG: ScanConfig = {
   wsPath: '/',
   stabilityMs: 0,
   earlyExit: true,
+  betweenTriesMs: 0,
+  recoveryPass: false,
   family: 4,
   measureSpeed: false,
   speedUrl: 'https://speed.cloudflare.com/__down?bytes=%BYTES%',
@@ -321,7 +340,12 @@ export const PRESETS: Record<string, Partial<ScanConfig>> = {
    * ones `test/operator-profiles.test.ts` runs against a model of the same network.
    */
   irancell: {
-    mode: 'tcp',
+    // Probed with a TLS handshake, not a bare connect. On this network a blocked or throttled
+    // path still completes the TCP handshake — the operator drops the payload, not the SYN — so
+    // `tcp` reported every blocked address as green (measured: 40/40 "healthy" on a line that was
+    // refusing sessions, against 11/40 honest ones). A handshake is also the thing a TLS tunnel
+    // needs, so what survives it is what the user can actually use.
+    mode: 'tls',
     tries: 3,
     minSuccesses: 1,
     timeoutMs: 6000,
@@ -333,6 +357,9 @@ export const PRESETS: Record<string, Partial<ScanConfig>> = {
     maxLossPct: 60,
     rateLimitPerSec: 12,
     minDelayMs: 40,
+    // Retries spaced out: back-to-back attempts hit the same per-second cap.
+    betweenTriesMs: 250,
+    recoveryPass: true,
     adaptiveBackoff: true,
     topN: 5,
     minScore: 35,
@@ -340,7 +367,7 @@ export const PRESETS: Record<string, Partial<ScanConfig>> = {
 
   /** MCI / Hamrah-e Aval: the same CGNAT shape, plus DPI resets on a burst (#58, #62). */
   mci: {
-    mode: 'tcp',
+    mode: 'tls',
     tries: 3,
     minSuccesses: 1,
     timeoutMs: 6000,
@@ -352,6 +379,10 @@ export const PRESETS: Record<string, Partial<ScanConfig>> = {
     maxLossPct: 60,
     rateLimitPerSec: 10,
     minDelayMs: 60,
+    // The DPI resets come in bursts, so a retry needs the longest pause of the three: this line
+    // kills a session it has just seen, and repeating it immediately is what loses the address.
+    betweenTriesMs: 350,
+    recoveryPass: true,
     adaptiveBackoff: true,
     topN: 5,
     minScore: 35,
@@ -364,7 +395,7 @@ export const PRESETS: Record<string, Partial<ScanConfig>> = {
    * given a longer budget instead of a smaller one.
    */
   mobin: {
-    mode: 'tcp',
+    mode: 'tls',
     tries: 2,
     minSuccesses: 1,
     timeoutMs: 6000,
@@ -376,6 +407,10 @@ export const PRESETS: Record<string, Partial<ScanConfig>> = {
     maxLossPct: 60,
     rateLimitPerSec: 12,
     minDelayMs: 40,
+    // Shorter gap than the mobile profiles: what this line loses is the whole session at once
+    // (the ONU table), so the wait only needs to outlive the retry, not a throttle window.
+    betweenTriesMs: 150,
+    recoveryPass: true,
     adaptiveBackoff: true,
     speedBytes: 4_000_000,
     speedTimeoutMs: 6000,

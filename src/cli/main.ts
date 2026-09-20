@@ -19,7 +19,7 @@ import { createEzServer } from '../server/server.ts';
 import { runDoctor, runSelfTest } from '../server/doctor.ts';
 import { Output, RESULT_HEADERS, nextStepHints, printDoctor, resultRow } from './render.ts';
 
-const VERSION = '1.5.0';
+const VERSION = '1.6.0';
 
 /* ───────────────────────────── arg parsing ───────────────────────────── */
 
@@ -38,6 +38,7 @@ const BOOL_FLAGS = new Set([
   'speed',
   'upload',
   'no-backoff',
+  'no-recovery',
   'no-autopause',
   'no-early-exit',
   'dry-run',
@@ -141,6 +142,8 @@ function buildConfig(args: Args): { config: ScanConfig; warnings: string[] } {
   set('rateLimitPerSec', num(args, 'rate', DEFAULT_CONFIG.rateLimitPerSec), args.values.has('rate'));
   set('minDelayMs', num(args, 'delay', DEFAULT_CONFIG.minDelayMs), args.values.has('delay'));
   set('adaptiveBackoff', false, args.flags.has('no-backoff'));
+  set('betweenTriesMs', num(args, 'retry-gap', DEFAULT_CONFIG.betweenTriesMs), args.values.has('retry-gap'));
+  set('recoveryPass', false, args.flags.has('no-recovery'));
   set('autoPauseOnNetworkLoss', false, args.flags.has('no-autopause'));
   // `--canary host:port`: the port used to be dropped, so the watchdog always dialled 443.
   const canary = args.values.get('canary') ?? '';
@@ -215,7 +218,7 @@ function printFailureBreakdown(out: Output, scanner: Scanner): void {
     http: 'TLS worked but HTTP did not: raise --timeout or set --mode tls',
     ws: 'the WebSocket gate failed everywhere: leave --no-ws (default) unless your client really uses ws',
     unstable: 'the idle hold rejected everything: it is the strictest gate — turn it off (--idle 0)',
-    tls: 'TLS negotiation failed: the SNI is probably wrong for these addresses',
+    tls: 'the handshake was refused — paste your config (--config "vless://…") or set --sni to the host your tunnel uses: a wrong SNI gets an alert like this from every edge',
   };
   if (advice[dominant]) out.line(out.paint('yellow', `  → ${advice[dominant]}`));
 }
@@ -492,6 +495,8 @@ scan options
   --port <n> --sni <domain> --sni-pool a,b
   --tries <n> --min <n>     attempts per address / required successes
   --timeout <ms> --workers <n> --latency <ms> --loss <pct> --score <n>
+  --retry-gap <ms>          pause between attempts at one address (default 0)
+  --no-recovery             do not retry addresses the line itself turned away
   --ws / --no-ws            require a WebSocket upgrade (default: off)
   --idle <ms>               idle-hold DPI check (default: off)
   --no-http                 skip the HTTP response check

@@ -187,6 +187,12 @@ interface DrainResult {
   ms: number;
   firstByteMs: number;
   ended: boolean;
+  /**
+   * How long the stream had been silent when reading stopped. This is the difference between
+   * "this line is slow" and "this transfer stopped moving": a narrow pipe keeps trickling, a
+   * PMTU/MTU hole goes quiet after the first window and never comes back.
+   */
+  idleMs: number;
   /** The first `HEAD_BYTES` of the stream, so the caller can read the status line. */
   head: Buffer;
 }
@@ -194,7 +200,10 @@ interface DrainResult {
 /** How much of the start of a stream is kept for inspection (a status line and headers). */
 const HEAD_BYTES = 1024;
 
-/** Counts bytes until `target` is reached, the socket ends, or the deadline passes. */
+/**
+ * Counts bytes until `target` is reached, the socket ends, or the deadline passes. The result
+ * says which of those happened (`ended`), and how quiet the stream had gone (`idleMs`).
+ */
 export function drainBytes(
   socket: net.Socket,
   target: number,
@@ -215,33 +224,40 @@ export function drainBytes(
       socket.off('close', onDone);
       if (signal) signal.removeEventListener('abort', onAbort);
     };
-    const onDone = () => {
+    let lastDataMs = 0;
+    // `ended` used to be hardcoded true, which made the deadline indistinguishable from a
+    // finished transfer; it now means "the stream finished on its own" (the target arrived, or
+    // the peer closed) rather than "we stopped reading".
+    const onDone = (ended: boolean) => {
       if (settled) return;
       settled = true;
       cleanup();
+      const ms = Number(process.hrtime.bigint() - started) / 1e6;
       resolve({
         bytes,
-        ms: Number(process.hrtime.bigint() - started) / 1e6,
+        ms,
         firstByteMs,
-        ended: true,
+        ended,
+        idleMs: lastDataMs ? Math.max(0, ms - lastDataMs) : ms,
         head: Buffer.concat(head),
       });
     };
     const onData = (chunk: Buffer) => {
-      if (!firstByteMs) firstByteMs = Number(process.hrtime.bigint() - started) / 1e6;
+      lastDataMs = Number(process.hrtime.bigint() - started) / 1e6;
+      if (!firstByteMs) firstByteMs = lastDataMs;
       bytes += chunk.length;
       if (headBytes < HEAD_BYTES) {
         const slice = chunk.subarray(0, HEAD_BYTES - headBytes);
         head.push(slice);
         headBytes += slice.length;
       }
-      if (bytes >= target) onDone();
+      if (bytes >= target) onDone(true);
     };
-    const onAbort = () => onDone();
-    const timer = setTimeout(onDone, timeoutMs);
+    const onAbort = () => onDone(false);
+    const timer = setTimeout(() => onDone(false), timeoutMs);
     socket.on('data', onData);
-    socket.on('error', onDone);
-    socket.on('close', onDone);
+    socket.on('error', () => onDone(false));
+    socket.on('close', () => onDone(true));
     if (signal) signal.addEventListener('abort', onAbort, { once: true });
   });
 }

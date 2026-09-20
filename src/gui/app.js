@@ -73,6 +73,7 @@ const T = {
     stopped: 'stopped by user',
     stopping: 'stopping…',
     waiting: 'waiting for the line to come back…',
+    retrying: (n) => `retrying ${n} the line turned away`,
     speed: (a, b) => `speed test ${a}/${b}`,
     aborted: 'aborted',
   },
@@ -88,6 +89,7 @@ const T = {
   },
   diagOk: 'ok',
   diagFail: 'fail',
+  diagPreset: (preset) => `This line has a signature — scan it with --preset ${preset}`,
   shutting: 'The EZ Scanner server stopped — you can close this tab.',
   kind: {
     timeout: 'timeout',
@@ -147,6 +149,7 @@ function messageLabel(message) {
   if (message === 'stopped by user') return M.stopped;
   if (message === 'stopping…') return M.stopping;
   if (message === 'waiting for the line to come back…') return M.waiting;
+  if ((m = /^retrying (\d+) addresses the line turned away…$/.exec(message))) return M.retrying(num(m[1]));
   if ((m = /^speed (\d+)\/(\d+)$/.exec(message))) return M.speed(num(m[1]), num(m[2]));
   if ((m = /^aborted: (.+)$/.exec(message))) return `${M.aborted} (${m[1]})`;
   return message;
@@ -1195,12 +1198,20 @@ function wire() {
     $('#doctor-out').textContent = '…';
     try {
       const res = await api('/api/doctor');
-          $('#doctor-out').innerHTML = res.report.checks
-        .map(
-          (c) =>
-            `<div class="${c.ok ? 'ok' : 'error'}"><b>${c.ok ? T.diagOk : T.diagFail}</b> ${escapeHtml(c.name)} — ${escapeHtml(c.detail)}${c.hint ? `\n   → ${escapeHtml(c.hint)}` : ''}</div>`,
-        )
-        .join('');
+      // The recommendation goes first: it is the one line a GUI user should be able to act on
+      // without reading the checks above it.
+      const recommended = res.report.recommendation;
+      const verdict = recommended?.preset
+        ? `<div class="warn-note"><b>${escapeHtml(T.diagPreset(recommended.preset))}</b>\n   → ${escapeHtml((recommended.reasons ?? []).join('\n   '))}</div>`
+        : '';
+      $('#doctor-out').innerHTML =
+        verdict +
+        res.report.checks
+          .map(
+            (c) =>
+              `<div class="${c.ok ? 'ok' : 'error'}"><b>${c.ok ? T.diagOk : T.diagFail}</b> ${escapeHtml(c.name)} — ${escapeHtml(c.detail)}${c.hint ? `\n   → ${escapeHtml(c.hint)}` : ''}</div>`,
+          )
+          .join('');
       toast(res.report.summary, 7000);
     } catch (err) {
       $('#doctor-out').textContent = err.message;

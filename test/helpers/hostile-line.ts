@@ -122,6 +122,25 @@ export function startHostileLine(opts: HostileLineOptions): Promise<HostileLine>
     else socket.destroy();
   };
 
+  /**
+   * A session that is accepted and then never answered: the socket stays open, so a client that
+   * waits burns its whole timeout instead of failing fast — the shape of a full CGNAT slot or a
+   * saturated ONU.
+   *
+   * What this can and cannot reproduce on loopback is worth knowing before writing an assertion
+   * against it. `tls.Server` reads at the handle level, so `pause()` does not stall the TLS
+   * layer, and there is no RTT here: the ClientHello and the request arrive together, so by the
+   * time any handler runs the request is already buffered and the session *is* answered. A
+   * black hole is therefore only faithful for a client that waits without sending (a `tcp`-mode
+   * probe hangs up before it could notice either way) — the counters below are what such a
+   * session is asserted on. When a test needs the *client* to observe a turned-away session,
+   * use `overLimit: 'refuse'`: a real RST is reproducible here.
+   */
+  const blackhole = (socket: Socket): void => {
+    socket.pause();
+    socket.on('resume', () => socket.pause());
+  };
+
   const drop = (ms: number): void => {
     deadUntil = Math.max(deadUntil, Date.now() + ms);
     stats.outages += 1;
@@ -193,7 +212,7 @@ export function startHostileLine(opts: HostileLineOptions): Promise<HostileLine>
       if (openedAt.length >= opts.maxNewSessionsPerSec) {
         stats.rateLimited += 1;
         stats.refused += 1;
-        if (opts.overLimit === 'blackhole') raw.pause(); // the SYN is accepted and forgotten
+        if (opts.overLimit === 'blackhole') blackhole(raw); // the SYN is accepted and forgotten
         else reset(raw);
         return;
       }
@@ -202,7 +221,7 @@ export function startHostileLine(opts: HostileLineOptions): Promise<HostileLine>
     if (live.size >= opts.sessionLimit) {
       stats.refused += 1;
       if (opts.outageMs) drop(opts.outageMs);
-      else if (opts.overLimit === 'blackhole') raw.pause(); // accepted by the kernel, never read
+      else if (opts.overLimit === 'blackhole') blackhole(raw); // accepted by the kernel, never read
       else reset(raw);
       return;
     }
