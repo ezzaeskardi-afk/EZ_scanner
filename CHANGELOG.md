@@ -113,8 +113,20 @@ network instead of described.
   profile it trips the ONU table and takes the line down — and that the profile the docs
   recommend for that operator (12 workers, 40 ms pause, `rate 12`) gets the whole list with
   nothing turned away and no outage. It prints the numbers:
-  `brutal: found 24/24 · peak 16 sessions · 8 turned away · 1 outages`, against
-  `recommended: found 24/24 · peak 1 · 0 turned away · 0 outages`.
+  `brutal: found 0/40 · peak 16 sessions · 64 turned away · 1 outages`, against
+  `--preset mobin: found 40/40 · peak 2 · 0 turned away · 0 outages`.
+
+  Two things this test had to learn the hard way, and they are worth knowing beyond the test:
+  **a session table only sees sessions that are held.** A handshake-only probe hangs up the
+  instant it connects, and on Linux those sockets are gone before the server gets a turn to
+  accept them — the same 200-worker burst that peaked at 16 sessions on Windows peaked at **2**
+  there, and the test asserting "the network must react" failed for a reason that had nothing
+  to do with the network. Both runs are now driven in `http` mode (each session held until the
+  delayed response arrives), which is also the harsher case: a `tcp`-mode session lives for
+  milliseconds, so the shipped handshake-only presets are gentler than these numbers suggest.
+  And **a rate limiter starts full.** The token bucket hands out a burst of `rate` tokens up
+  front, so a preset declaring 12/s still opens ~2x that in its opening second; the line caps
+  are sized above that honest opening rate, or the assertion is luck rather than headroom.
 - `test/helpers/hostile-line.ts` gained `maxNewSessionsPerSec`, the per-second cap a CGNAT
   slot enforces — the mechanism that turns a burst into timeouts on a line that is otherwise
   fine, which a session *table* alone only models under sustained load.

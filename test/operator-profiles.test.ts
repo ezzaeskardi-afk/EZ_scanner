@@ -14,9 +14,16 @@
  * here — and asserted below — are the numbers a user gets from `--preset irancell|mci|mobin`.
  * Change a preset and this test is what tells you whether that network can still take it.
  *
- * Note what 24 addresses can and cannot show: the burst is *visible* to the access network
- * (sessions turned away, and on fiber the table tripping), but at this size a retry usually
- * rescues the address. Losing addresses at scale is what the bigger burst in
+ * Why the list is longer than the table it is meant to trip: a scan's opening second is the
+ * expensive one, and the token bucket starts full, so a preset that declares 12/s still opens
+ * ~2x that (a burst of 12, then the refill) before it settles. The line caps here are sized
+ * above that honest opening rate, so "the preset stays clean" is a claim with headroom rather
+ * than luck; the burst above it is 4x the preset's worker count, which is the shape that
+ * actually gets a subscriber throttled.
+ *
+ * Note what a list this size can and cannot show: the burst is *visible* to the access network
+ * (sessions turned away, and on fiber the table tripping), and the preset keeps all of it. That
+ * an over-driven line also *loses addresses* at scale is what the bigger burst in
  * `hostile-line.test.ts` demonstrates.
  */
 import assert from 'node:assert/strict';
@@ -38,7 +45,7 @@ after(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-const ADDRESSES = 24;
+const ADDRESSES = 40;
 const targetsFor = (port: number) => Array.from({ length: ADDRESSES }, (_, i) => `127.0.0.${i + 1}:${port}`);
 
 interface OperatorProfile {
@@ -62,7 +69,24 @@ const BRUTAL: Partial<ScanConfig> = {
   minDelayMs: 0,
   rateLimitPerSec: 0,
   adaptiveBackoff: false,
+  // The burst is about what the network sees in the opening second; waiting 6s for a
+  // black-holed session proves nothing extra and would triple the test's runtime.
+  timeoutMs: 1200,
 };
+
+/**
+ * Sessions have to be *held* for a session table or a rate cap to see a burst, so both runs
+ * below are driven in `http` mode even though the shipped presets are handshake-only.
+ *
+ * This is not a detail: a `tcp` probe hangs up the moment it connects, and on Linux those
+ * sockets are gone before the server gets a turn to accept them — the same 200-worker burst
+ * that fills a table on Windows showed a peak of **2** sessions there, and the test that
+ * asserted "the network must react" failed for a reason that had nothing to do with the
+ * network. Holding each session until the (delayed) response arrives makes the burst visible
+ * on every platform. It is also the harsher case, since a tcp-mode session lives for
+ * milliseconds — which is part of why the operator presets are handshake-only.
+ */
+const HELD: Partial<ScanConfig> = { mode: 'http', requireHttp: true };
 
 const PROFILES: OperatorProfile[] = [
   {
@@ -71,9 +95,9 @@ const PROFILES: OperatorProfile[] = [
     signature: 'mobile CGNAT: a per-subscriber session slot and a hard cap on new sessions/second (#56, #75)',
     line: {
       sessionLimit: 128,
-      // Dialled down so a 24-address test burst reaches a cap a real per-subscriber one would
-      // only meet under a much bigger scan: the ratio is what the test needs.
-      maxNewSessionsPerSec: 20,
+      // Sized above the opening second a shipped preset produces (~2x its declared rate,
+      // because the bucket starts full) and far below what 200 workers fire at once.
+      maxNewSessionsPerSec: 32,
       overLimit: 'blackhole', // the SYN is accepted and forgotten: the probe sees a timeout
       baseDelayMs: 60,
       jitterMs: 120,
@@ -88,11 +112,13 @@ const PROFILES: OperatorProfile[] = [
     signature: 'mobile CGNAT with DPI resets on a burst (#58, #62)',
     line: {
       sessionLimit: 96,
-      maxNewSessionsPerSec: 15,
+      maxNewSessionsPerSec: 32,
       overLimit: 'refuse', // a real RST: the probe reports `reset`
       baseDelayMs: 50,
       jitterMs: 90,
-      resetRate: 0.3,
+      // Moderate DPI: heavy enough that a retry storm shows up as `reset`, light enough that
+      // three tries still recover nearly every address.
+      resetRate: 0.15,
       listenAll: true,
     },
   },
@@ -102,7 +128,8 @@ const PROFILES: OperatorProfile[] = [
     signature:
       'a cheap ONU behind PPPoE: a small table, a weak CPU, and the whole home goes down when it is filled (#25, #96)',
     line: {
-      // A cheap ONU's table, dialled down to what a 24-address burst can fill in a test.
+      // A cheap ONU's table, dialled down to what a held-session burst fills in a test. The
+      // preset's 12 workers have to sit under it — that is the documented rule for fiber.
       sessionLimit: 16,
       outageMs: 2500, // filling the table drops every session and turns new ones away
       maxNewSessionsPerSec: 40,
@@ -126,8 +153,7 @@ async function run(profile: OperatorProfile, config: Partial<ScanConfig>): Promi
   const scanner = new Scanner(dataDir);
   scanner.configure({
     ...DEFAULT_CONFIG,
-    mode: 'tcp',
-    requireHttp: false,
+    ...HELD,
     sni: '',
     port: line.port,
     minSuccesses: 1,
@@ -156,11 +182,16 @@ for (const profile of PROFILES) {
   test(`${profile.name}: the brutal profile breaks it, --preset ${profile.preset} gets through`, async () => {
     const preset = applyPreset(profile.preset);
     assert.ok(preset, `--preset ${profile.preset} must exist`);
-    assert.ok((preset!.workers ?? 0) <= 24, 'an operator preset stays well inside a home ONU budget');
+    assert.ok((preset!.workers ?? 0) <= ADDRESSES / 3, 'an operator preset stays well inside a home ONU budget');
     assert.ok((preset!.rateLimitPerSec ?? 0) > 0, 'and it caps the session rate: workers alone cannot');
+    assert.equal(preset!.mode, 'tcp', 'the shipped preset is handshake-only, the kindest mode for a session table');
 
     const brutal = await run(profile, BRUTAL);
-    const safe = await run(profile, preset!);
+    // The preset's own numbers (workers/rate/delay/tries), deliberately driven in the held
+    // mode: handshake-only sessions barely exist, so `tcp` would flatter the preset right past
+    // the table it has to respect. `assert.equal(preset!.mode, 'tcp')` below keeps the shipped
+    // mode on record.
+    const safe = await run(profile, { ...preset!, ...HELD });
     const report = (label: string, r: Run) =>
       `${label}: found ${r.healthy}/${ADDRESSES} · peak ${r.line.peakConcurrent} sessions · ` +
       `${r.line.refused} turned away (${r.line.rateLimited} by the rate cap) · ${r.line.outages} outages · ` +
