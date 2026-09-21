@@ -7,7 +7,6 @@
  *   ezscan resume <session-id>
  *   ezscan doctor | selftest | config <link> | sessions | export
  */
-import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { parseShareLink, isParsedConfig, describeConfig, sniRiskWarnings } from '../core/configparse.ts';
@@ -17,9 +16,10 @@ import { applyPreset, DEFAULT_CONFIG, PRESETS, type ScanConfig, type SourceSpec 
 import { sanitizeConfig, sanitizeSource } from '../core/validate.ts';
 import { createEzServer } from '../server/server.ts';
 import { runDoctor, runSelfTest } from '../server/doctor.ts';
+import { openBrowser } from './openbrowser.ts';
 import { Output, RESULT_HEADERS, nextStepHints, printDoctor, resultRow } from './render.ts';
 
-const VERSION = '1.6.0';
+const VERSION = '1.6.1';
 
 /* ───────────────────────────── arg parsing ───────────────────────────── */
 
@@ -29,6 +29,12 @@ interface Args {
   flags: Set<string>;
 }
 
+/**
+ * Options that take no value. Everything the CLI *reads* through `flags.has(...)` has to be in
+ * here: an unlisted name is parsed as an option that takes a value, so it silently eats the next
+ * argument — `ezscan resume --no-speed a1b2c3d4` lost the session id and printed the usage text.
+ * `test/cli.test.ts` keeps the two lists in step.
+ */
 const BOOL_FLAGS = new Set([
   'extended',
   'ws',
@@ -37,15 +43,18 @@ const BOOL_FLAGS = new Set([
   'no-http',
   'speed',
   'upload',
+  'no-speed',
   'no-backoff',
   'no-recovery',
   'no-autopause',
   'no-early-exit',
+  'all',
   'dry-run',
   'quiet',
   'no-color',
   'help',
   'h',
+  'version',
   'json-console',
   'open',
   'no-open',
@@ -187,14 +196,18 @@ function out0(args: Args): Output {
 
 function printResults(out: Output, results: ReturnType<Scanner['getResults']>, limit: number): void {
   const healthy = results.filter((r) => r.healthy);
-  const list = (healthy.length ? healthy : results).slice(0, limit);
+  const visible = healthy.length ? healthy : results;
+  const list = visible.slice(0, limit);
   if (!list.length) {
     out.line(out.paint('yellow', 'no reachable address found — see the hints below'));
     return;
   }
   out.table(RESULT_HEADERS, list.map(resultRow));
-  if (results.length > limit) {
-    out.line(out.paint('dim', `… ${results.length - limit} more rows (use --csv/--json/--xlsx to get everything)`));
+  // Count what is actually hidden: the table shows the healthy rows when there are any, so
+  // reporting `results.length - limit` claimed rows that were never going to be printed.
+  const hidden = visible.length - list.length;
+  if (hidden > 0) {
+    out.line(out.paint('dim', `… ${hidden} more rows (use --csv/--json/--xlsx to get everything)`));
   }
   out.line('');
   out.line(out.paint('green', summarize(results)));
@@ -253,7 +266,10 @@ async function cmdScan(args: Args): Promise<number> {
   };
   process.once('SIGINT', stopping);
 
-  await scanner.start({ label });
+  // `--no-speed` reached only `resume` while `docs/USAGE.md` documents it on `scan`
+  // (`ezscan scan --preset mobin --count 5000 --no-speed …`), so the documented way to skip the
+  // speed phase on a line with a broken PMTU did nothing.
+  await scanner.start({ label, skipSpeed: args.flags.has('no-speed') });
 
   out.clearProgress();
   const results = scanner.getResults('score', { includeFailures: true });
@@ -403,18 +419,6 @@ async function cmdGui(args: Args): Promise<number> {
   return 0;
 }
 
-function openBrowser(url: string): void {
-  try {
-    const platform = process.platform;
-    const cmd = platform === 'win32' ? 'cmd' : platform === 'darwin' ? 'open' : 'xdg-open';
-    const argv = platform === 'win32' ? ['/c', 'start', '', url] : [url];
-    const child = spawn(cmd, argv, { detached: true, stdio: 'ignore' });
-    child.unref();
-  } catch {
-    /* the user can open the URL by hand */
-  }
-}
-
 async function cmdConfig(args: Args): Promise<number> {
   const out = out0(args);
   const link = args.positional.slice(1).join(' ') || args.values.get('link') || '';
@@ -504,6 +508,8 @@ scan options
   --rate <n> --delay <ms> --no-backoff --no-autopause --canary host:port
   --family 4|6|0            address family
   --json/--csv/--xlsx/--txt/--ndjson/--links <file>   write results
+  --all                     write every row to those files, not only the healthy ones
+  --no-speed                skip the speed/upload phases (scan and resume)
   --link-template "<link>"  template used for --links
   --session "<label>"       label for the autosaved session
   --dry-run                 only expand the source and show the count

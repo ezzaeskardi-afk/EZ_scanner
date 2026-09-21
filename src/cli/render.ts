@@ -136,6 +136,13 @@ export function printDoctor(out: Output, report: DoctorReport): void {
         `  → ezscan scan --preset ${report.recommendation.preset} --source cloudflare --count 200`,
       ),
     );
+  } else if (report.recommendation?.reasons.length) {
+    // No preset fits, but the measurement still has the answer the doctor exists to give: this
+    // one is not a parameter to lower, it is the path itself. Printing nothing would leave the
+    // user with "no operator-specific behaviour found" on a line where nothing completed.
+    out.line('');
+    out.line(out.paint('yellow', '! The measurement could not name a preset'));
+    for (const reason of report.recommendation.reasons) out.line(`  ${reason}`);
   }
   if (report.dnsHijack) {
     const hijack = report.dnsHijack;

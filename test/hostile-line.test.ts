@@ -154,11 +154,18 @@ test('a response slower than the timeout is the whole difference between all-red
 });
 
 test('resets make the scanner slow itself down instead of hammering', async () => {
-  // 85% of sessions killed and five tries each: the failure ratio stays far above the
-  // back-off threshold (0.55) and an address loses all five tries with P ≈ 0.44^5, so
-  // "some addresses survive" is not a coin flip (P(no address survives) ≈ 1e-4).
+  // 85% of sessions killed and five tries each. The test needs *both* tails of that coin, so the
+  // arithmetic has to hold in both directions: an address loses all five tries with
+  // P = 0.85^5 ≈ 0.44, and it survives all five with P = 1 − 0.44 ≈ 0.56. Twelve addresses was
+  // enough for neither — P(not one address lost every try) was 0.56^12 ≈ 8.5e-4, which is how this
+  // test failed in CI ("a reset is reported as a reset … saw: " with an empty breakdown: every
+  // address had found a session). With 24 both tails fall below 1e-6.
+  const addresses = 24;
   const line = await startHostileLine({ sessionLimit: 32, resetRate: 0.85, listenAll: true, baseDelayMs: 10 });
-  const targets = Array.from({ length: 12 }, (_, i) => `127.0.0.${i + 1}:${line.port}`);
+  const targets = Array.from(
+    { length: addresses },
+    (_, i) => `127.0.0.${(i % 250) + 1}:${line.port}`,
+  );
   try {
     const scanner = newScanner();
     scanner.configure(config(line.port, { tries: 5, minSuccesses: 1, workers: 4, adaptiveBackoff: true }));

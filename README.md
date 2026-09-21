@@ -3,7 +3,7 @@
 **Find clean Cloudflare IPs for SNI-fronted tunnels — with a real GUI and a complete CLI.**
 Clean-IP discovery for Cloudflare fronted tunnels (vless / vmess / trojan / BPB style), with a local GUI, a scriptable CLI, resumable scans and honest diagnostics.
 
-[![tests](https://img.shields.io/badge/tests-155%20passing-brightgreen)](#tests)
+[![tests](https://img.shields.io/badge/tests-166%20passing-brightgreen)](#tests)
 [![node](https://img.shields.io/badge/node-%E2%89%A522.18-blue)](#install)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
@@ -227,8 +227,12 @@ exact address, even after a reboot.
 **I get no IPs at all.** Run `ezscan doctor`, then `ezscan selftest`; the output says whether
 the line or the gates are at fault. If selftest is green, set `minScore` to `0` and keep
 WS/idle off. If doctor flags the resolver, the line is rewriting DNS answers: scan by IP
-(the Cloudflare or Paste source) instead of by domain. And if doctor names a preset, that is
-the answer: `ezscan scan --preset <name>` uses the settings that line needs.
+(the Cloudflare or Paste source) instead of by domain — and a resolver that answers nothing is
+reported as a failure, not as "no answer". If doctor names a preset, that is the answer:
+`ezscan scan --preset <name>` uses the settings that line needs. If it says the measurement could
+not name one, that is a real answer too: not one probe completed even on an idle line, so the
+problem is the path to your edge (SNI, tunnel host, or a network that blocks it), not the scan
+parameters.
 
 **Why does the measured speed differ from my tunnel?** The probe measures the direct path to
 the edge (no proxy) and is meant for **ranking** IPs. Judge the final number inside your
@@ -249,7 +253,7 @@ src/
   gui/       build-free UI (plain HTML/CSS/JS, English-only) + vendor/openui
   cli/       command line
 scripts/     maintenance tooling: OpenUI style pruning (no build step, gated in CI)
-test/        155 tests: probe against a local TLS server, stop/resume, snapshots, API and
+test/        166 tests: probe against a local TLS server, stop/resume, snapshots, API and
              security, exports, the OpenUI report, the HTML/CSS/JS contract, the CLI run as
              a user runs it, the line-signature measurement that names a preset, the
              dead-code / version / pruned-stylesheet gates
@@ -292,7 +296,7 @@ chart = BarChart(chartLabels, [chartSeries], "grouped", "latency bucket", "Addre
 
 ```bash
 npm run typecheck
-npm test                  # 155 tests: probe engine, gating, pause/resume, snapshots,
+npm test                  # 166 tests: probe engine, gating, pause/resume, snapshots,
                           # exports, HTTP API, OpenUI report, GUI contract, CLI, dead code,
                           # and integration runs against a fake hostile access network
 npm run check:openui-css  # the vendored OpenUI stylesheet is still minimal, complete and correctly pinned

@@ -179,6 +179,68 @@ test('an address that answered wrongly is not retried', async () => {
   );
 });
 
+test('a long block is retried in full, not just its first 300 addresses', async () => {
+  // The failure list the diagnostics use is capped at 300 samples, and the recovery pass used to
+  // read its candidates out of it: a block wide enough to cover more than that (a minute at the
+  // presets' ~11 addresses/s is over 600) left everything past the 300th address lost until the
+  // next scan. The candidates now have their own list. This line refuses almost every session, so
+  // the count of turned-away addresses — and therefore of retries — is what the log reports.
+  // The candidate key is `ip:port`, so a distinct address needs its own line (a second listener
+  // is a second port) — 40 loopback addresses per line, the range the other harness tests already
+  // use. `sessionLimit: 1` with a 3/s cap turns away nearly every session with a real RST, and a
+  // reset mid-handshake is exactly what makes a probe a network failure rather than an answer.
+  const perLine = 40;
+  const lines = await Promise.all(
+    Array.from({ length: 10 }, () =>
+      startHostileLine({ sessionLimit: 1, maxNewSessionsPerSec: 3, overLimit: 'refuse', baseDelayMs: 2, listenAll: true }),
+    ),
+  );
+  const scanner = new Scanner(dataDir);
+  scanner.configure({
+    ...DEFAULT_CONFIG,
+    mode: 'tls',
+    requireHttp: false,
+    tries: 1,
+    minSuccesses: 1,
+    workers: 16,
+    minDelayMs: 0,
+    rateLimitPerSec: 0,
+    maxLatencyMs: 100_000,
+    maxLossPct: 100,
+    minScore: 0,
+    timeoutMs: 2000,
+    port: lines[0].port,
+    sni: 'hostile.line',
+    measureSpeed: false,
+    autoPauseOnNetworkLoss: false,
+    recoveryPass: true,
+  } satisfies Partial<ScanConfig>);
+  const total = perLine * lines.length;
+  try {
+    await scanner.start({
+      targets: lines.flatMap((line) =>
+        Array.from({ length: perLine }, (_, i) => `127.0.0.${i + 1}:${line.port}`),
+      ),
+      label: 'wide-block',
+    });
+  } finally {
+    for (const line of lines) await line.close();
+  }
+
+  const retried = Number(
+    /retrying (\d+) addresses the line turned away/.exec(scanner.logs.map((l) => l.text).join('\n'))?.[1],
+  );
+  assert.ok(Number.isFinite(retried), 'the recovery pass ran');
+  assert.ok(
+    retried > 300,
+    `every turned-away address is retried, not the first 300 (saw ${retried} of ${total})`,
+  );
+  assert.ok(
+    lines.reduce((sum, line) => sum + line.stats.refused, 0) > 300,
+    'and the line really did turn away more than 300 sessions',
+  );
+});
+
 test('spacing the retries is what gets an address through a rate cap', async () => {
   // Three attempts at one address are three sessions against a cap that counts sessions per
   // second across the whole scan. Sent back to back they land in one window and all fail; spaced

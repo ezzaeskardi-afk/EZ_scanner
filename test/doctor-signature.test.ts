@@ -84,6 +84,37 @@ test('one reset is not a signature', () => {
   assert.equal(verdict.preset, null, 'a single reset is noise, not DPI');
 });
 
+test('a control that failed disqualifies the burst finding', () => {
+  // The idle probes are the control, and they have to be able to disagree: if not one of them
+  // completed with nothing else open, the burst is not what failed. Measured on a filtered line
+  // (all four idle probes timed out, five of six under load), this was reported as "the line caps
+  // how many sessions you may hold at once", which points the user at `--workers` for a line that
+  // does not carry the request at all.
+  const verdict = classifyLine(
+    signature({
+      underLoad: { attempts: 6, ok: 1, reset: 0, timedOut: 5, other: 0 },
+      followUp: 'timeout',
+      idle: { attempts: 4, ok: 0, reset: 0, timedOut: 4, other: 0 },
+    }),
+  );
+  assert.equal(verdict.preset, null, 'the line is not carrying probes, capped or not');
+  assert.match(verdict.reasons[0]!, /not one probe completed even with an idle line/);
+  assert.doesNotMatch(verdict.reasons.join(' '), /--workers/, 'so it must not blame concurrency');
+});
+
+test('one idle success is enough to make the burst answer count', () => {
+  // The control only overrides the finding when it really failed: a probe that works on an idle
+  // line proves the path carries the request, so probes failing under the burst are a cap.
+  const verdict = classifyLine(
+    signature({
+      underLoad: { attempts: 6, ok: 2, reset: 0, timedOut: 4, other: 0 },
+      idle: { attempts: 4, ok: 1, reset: 0, timedOut: 3, other: 0 },
+    }),
+  );
+  assert.equal(verdict.preset, 'irancell');
+  assert.match(verdict.reasons[0]!, /4 of 6 probes attempted while 12 other sessions were held open/);
+});
+
 test('resets only under load are the cap, not DPI', () => {
   const verdict = classifyLine(
     signature({

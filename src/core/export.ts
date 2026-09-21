@@ -52,6 +52,10 @@ const CSV_COLUMNS: Array<{ key: string; get: (r: IpResult) => string | number }>
   { key: 'first_seen', get: (r) => new Date(r.firstSeenAt).toISOString() },
   { key: 'last_seen', get: (r) => new Date(r.lastSeenAt).toISOString() },
   { key: 'reasons', get: (r) => r.reasons.join('; ') },
+  // Appended, not inserted: the columns before it are what a spreadsheet already parses. The
+  // flag is the recovery pass saying "this address was found on the second chance", which is the
+  // difference between a lucky sweep and a line that blocked part of it.
+  { key: 'recovered', get: (r) => (r.recovered ? 'yes' : 'no') },
 ];
 
 function csvCell(value: string | number): string {

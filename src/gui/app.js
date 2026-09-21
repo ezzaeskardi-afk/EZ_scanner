@@ -90,6 +90,7 @@ const T = {
   diagOk: 'ok',
   diagFail: 'fail',
   diagPreset: (preset) => `This line has a signature — scan it with --preset ${preset}`,
+  diagNoPreset: 'No preset fits what was measured — see the reasons',
   shutting: 'The EZ Scanner server stopped — you can close this tab.',
   kind: {
     timeout: 'timeout',
@@ -1201,9 +1202,13 @@ function wire() {
       // The recommendation goes first: it is the one line a GUI user should be able to act on
       // without reading the checks above it.
       const recommended = res.report.recommendation;
+      // A measurement with reasons and no preset is the doctor saying "this is not a parameter to
+      // lower": worth the same banner, without a command that would not help.
       const verdict = recommended?.preset
         ? `<div class="warn-note"><b>${escapeHtml(T.diagPreset(recommended.preset))}</b>\n   → ${escapeHtml((recommended.reasons ?? []).join('\n   '))}</div>`
-        : '';
+        : recommended?.reasons?.length
+          ? `<div class="warn-note"><b>${escapeHtml(T.diagNoPreset)}</b>\n   → ${escapeHtml(recommended.reasons.join('\n   '))}</div>`
+          : '';
       $('#doctor-out').innerHTML =
         verdict +
         res.report.checks

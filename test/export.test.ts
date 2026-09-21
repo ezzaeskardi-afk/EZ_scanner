@@ -27,6 +27,17 @@ test('csv is BOM prefixed, quoted and complete', () => {
   assert.ok(lines[2].includes('"loss 60% > 50%; why, ""quoted"""'), lines[2]);
 });
 
+test('the csv carries the recovery flag', () => {
+  // `recovered` marks the addresses found on the recovery pass's second chance — the difference
+  // between a lucky sweep and a line that blocked part of it. The JSON export serialises the whole
+  // record, so it always had the flag; the CSV/XLSX columns did not, and those are what people
+  // paste into their client.
+  const lines = toCsv([sample('104.16.0.1', 100), sample('104.16.0.2', 110, { recovered: true })]) .trim().split('\r\n');
+  assert.equal(lines[0].split(',').at(-1), 'recovered', 'the column is there');
+  assert.equal(lines[1].split(',').at(-1), 'no');
+  assert.equal(lines[2].split(',').at(-1), 'yes');
+});
+
 test('txt/hosts/links outputs are paste-ready', () => {
   const rows = [sample('104.16.0.1', 100), sample('2606:4700::1', 200)];
   assert.equal(toTxt(rows), '104.16.0.1:443\n[2606:4700::1]:443\n');

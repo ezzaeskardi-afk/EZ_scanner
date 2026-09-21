@@ -205,6 +205,98 @@ async function resolveOverHttps(
   return null;
 }
 
+/** One probe name and what the system resolver gave back for it. */
+interface DnsAnswer {
+  name: string;
+  ips: string[];
+  /** Why the answer cannot be genuine, or null when it looks legitimate. */
+  reason: string | null;
+}
+
+/**
+ * The two DNS rows: is the system resolver answering at all, and does its answer match DoH?
+ *
+ * Pure and separate from `runDoctor` because the interesting case — a resolver that answers
+ * *nothing* — is exactly the one that cannot be produced on a machine whose DNS works, and it is
+ * the case the doctor silently got wrong: `defaultResolve` reports failure by returning `[]`, so
+ * the "no answer" branch keyed on `answers.length` could never run and a line with a dead resolver
+ * was told "DNS lookup: ok — no answer". Every domain source is dead in that state, and the user
+ * was sent looking at the scanner instead.
+ */
+export function judgeDns(input: {
+  answers: DnsAnswer[];
+  /** The DNS-over-HTTPS comparison point, or null when neither provider was reachable. */
+  doh: { ips: string[]; via: string } | null;
+  /** The resolver's own error, when it threw instead of returning an empty answer. */
+  failure?: string;
+}): { checks: Check[]; hijack?: DnsHijack } {
+  const { answers, doh, failure = '' } = input;
+  const checks: Check[] = [];
+  const describe = (entry: DnsAnswer) => `${entry.name} → ${entry.ips.slice(0, 3).join(', ') || 'no answer'}`;
+  const answered = answers.filter((entry) => entry.ips.length);
+  const suspicious = answers.find((entry) => entry.reason);
+  let hijack: DnsHijack | undefined;
+
+  if (!answered.length) {
+    const names = answers.map((entry) => entry.name).join(', ') || 'any name';
+    checks.push({
+      name: 'DNS lookup',
+      ok: false,
+      detail: failure || `no answer for ${names}`,
+      hint:
+        'the system resolver is not answering, so every domain source probes nothing — check the DNS of the line, ' +
+        'or scan by IP (the Cloudflare or Paste source: an SNI is never resolved, so it is unaffected)',
+    });
+  } else if (suspicious) {
+    hijack = {
+      name: suspicious.name,
+      answer: suspicious.ips,
+      reason: suspicious.reason!,
+      viaDoh: doh?.ips ?? [],
+      dohVia: doh?.via ?? null,
+    };
+    checks.push({
+      name: 'DNS lookup',
+      ok: false,
+      detail: `${describe(suspicious)} — ${suspicious.reason}`,
+      hint:
+        'the resolver is answering with a filtered address, so any domain source probes the wrong host: ' +
+        'use the Cloudflare/Paste source or an IP list (SNI is not resolved, so it is unaffected), and switch DNS to a resolver that is not tampered with',
+    });
+  } else {
+    checks.push({ name: 'DNS lookup', ok: true, detail: answers.map(describe).join(' | ') });
+  }
+
+  if (!doh) {
+    checks.push({
+      name: 'DNS over HTTPS',
+      ok: true,
+      detail: 'neither 1.1.1.1 nor 8.8.8.8 could be reached, comparison skipped',
+      hint: 'DoH is often blocked on a filtered line — if the DNS lookup above looks wrong, switch DNS before scanning domains',
+    });
+  } else {
+    const systemIps = new Set(answers.find((entry) => entry.name === 'cloudflare.com')?.ips ?? []);
+    const agrees = doh.ips.some((ip) => systemIps.has(ip));
+    checks.push({
+      name: `DNS over HTTPS via ${doh.via}`,
+      ok: agrees,
+      detail: agrees
+        ? `cloudflare.com → ${doh.ips.join(', ')} — the system resolver agrees`
+        : systemIps.size
+          ? `cloudflare.com → ${doh.ips.join(', ')}, but the system resolver said ` +
+            `${[...systemIps].join(', ')} — the answer is being tampered with`
+          : `cloudflare.com → ${doh.ips.join(', ')} — and the system resolver answered nothing at all`,
+      hint: agrees
+        ? undefined
+        : systemIps.size
+          ? 'scan by IP (Cloudflare/Paste source) on this line, or change the resolver: domain sources cannot be trusted here'
+          : 'the lookup itself is failing, not just the answer — set a working resolver before scanning anything by domain',
+    });
+  }
+
+  return hijack ? { checks, hijack } : { checks };
+}
+
 /** Sessions opened at once when measuring the burst. Small enough to be harmless on a good
  * line, large enough that a per-subscriber CGNAT slot or a cheap ONU table notices. */
 const BURST_SESSIONS = 12;
@@ -378,6 +470,22 @@ export function classifyLine(signature: LineSignature): LineRecommendation {
     return { preset: 'mci', reasons };
   }
 
+  // The control has to be able to disagree. "Probes failed while the burst was held" is only
+  // evidence of a *cap* if the same probes work with nothing else open; if not one of them
+  // completed even then, the path is not carrying the request at all, and naming a concurrency cap
+  // would send the user to `--workers` for a problem that has nothing to do with it. Measured on a
+  // sandboxed line: 0 of 4 probes completed while idle, exactly like 5 of 6 under load, and the
+  // verdict was still "the line caps how many sessions you may hold at once".
+  const controlFailed = signature.idle.attempts > 0 && signature.idle.ok === 0 && signature.idle.reset === 0;
+  if (controlFailed) {
+    reasons.push(
+      `not one probe completed even with an idle line (${signature.idle.timedOut} of ` +
+        `${signature.idle.attempts} timed out, nothing reset), so the burst is not the cause: the path is not ` +
+        'carrying the request itself — check the SNI against your own tunnel, try `--mode tcp`, and scan by IP',
+    );
+    return { preset: null, reasons };
+  }
+
   if (turnedAway > 0 || blockedUnderLoad > 0) {
     const detail =
       blockedUnderLoad > 0
@@ -454,7 +562,7 @@ export async function runDoctor(dataDir: string, sampleSni = 'www.cloudflare.com
   // with the block page. Every domain source then probes an address that was never the
   // host's and the scan looks broken for no visible reason. The two rows below separate
   // "the resolver is tampered with" from "Cloudflare is unreachable".
-  const answers: Array<{ name: string; ips: string[]; reason: string | null }> = [];
+  const answers: DnsAnswer[] = [];
   let dnsFailure = '';
   for (const name of DNS_PROBES) {
     try {
@@ -466,61 +574,9 @@ export async function runDoctor(dataDir: string, sampleSni = 'www.cloudflare.com
   }
 
   const doh = await resolveOverHttps('cloudflare.com', controller.signal);
-  const suspicious = answers.find((entry) => entry.reason);
-  let dnsHijack: DnsHijack | undefined;
-
-  const describe = (entry: { name: string; ips: string[] }) =>
-    `${entry.name} → ${entry.ips.slice(0, 3).join(', ') || 'no answer'}`;
-
-  if (!answers.length) {
-    checks.push({
-      name: 'DNS lookup',
-      ok: false,
-      detail: dnsFailure || 'no answer',
-      hint: 'the system resolver is not answering — check the DNS settings of the line',
-    });
-  } else if (suspicious) {
-    dnsHijack = {
-      name: suspicious.name,
-      answer: suspicious.ips,
-      reason: suspicious.reason!,
-      viaDoh: doh?.ips ?? [],
-      dohVia: doh?.via ?? null,
-    };
-    checks.push({
-      name: 'DNS lookup',
-      ok: false,
-      detail: `${describe(suspicious)} — ${suspicious.reason}`,
-      hint:
-        'the resolver is answering with a filtered address, so any domain source probes the wrong host: ' +
-        'use the Cloudflare/Paste source or an IP list (SNI is not resolved, so it is unaffected), and switch DNS to a resolver that is not tampered with',
-    });
-  } else {
-    checks.push({ name: 'DNS lookup', ok: true, detail: answers.map(describe).join(' | ') });
-  }
-
-  if (!doh) {
-    checks.push({
-      name: 'DNS over HTTPS',
-      ok: true,
-      detail: 'neither 1.1.1.1 nor 8.8.8.8 could be reached, comparison skipped',
-      hint: 'DoH is often blocked on a filtered line — if the DNS lookup above looks wrong, switch DNS before scanning domains',
-    });
-  } else {
-    const systemIps = new Set(answers.find((entry) => entry.name === 'cloudflare.com')?.ips ?? []);
-    const agrees = doh.ips.some((ip) => systemIps.has(ip));
-    checks.push({
-      name: `DNS over HTTPS via ${doh.via}`,
-      ok: agrees,
-      detail: agrees
-        ? `cloudflare.com → ${doh.ips.join(', ')} — the system resolver agrees`
-        : `cloudflare.com → ${doh.ips.join(', ')}, but the system resolver said ` +
-          `${[...systemIps].join(', ') || 'nothing'} — the answer is being tampered with`,
-      hint: agrees
-        ? undefined
-        : 'scan by IP (Cloudflare/Paste source) on this line, or change the resolver: domain sources cannot be trusted here',
-    });
-  }
+  const dns = judgeDns({ answers, doh, failure: dnsFailure });
+  checks.push(...dns.checks);
+  const dnsHijack = dns.hijack;
 
   // Which edge the rows below dial. The fixed address is a last resort: a Cloudflare edge
   // that does not serve a name answers `403 error code: 1034`, so probing it with that
@@ -633,7 +689,9 @@ export async function runDoctor(dataDir: string, sampleSni = 'www.cloudflare.com
       ok: true,
       detail: recommendation.preset
         ? `--preset ${recommendation.preset}`
-        : 'none — no operator-specific behaviour found, so scan with --preset standard',
+        : recommendation.reasons.length
+          ? 'none — the measurement has something to say, but no preset fits it (see below)'
+          : 'none — no operator-specific behaviour found, so scan with --preset standard',
       hint: recommendation.reasons.length ? recommendation.reasons.join('; ') : undefined,
     });
   } catch (err) {
@@ -650,7 +708,9 @@ export async function runDoctor(dataDir: string, sampleSni = 'www.cloudflare.com
     summary,
     ...(dnsHijack ? { dnsHijack } : {}),
     ...(signature ? { signature } : {}),
-    ...(recommendation?.preset ? { recommendation } : {}),
+    // A recommendation with reasons and no preset is still worth reporting: it is the doctor saying
+    // "this is not a parameter problem", which is the answer to the question the tool exists for.
+    ...(recommendation && (recommendation.preset || recommendation.reasons.length) ? { recommendation } : {}),
   };
 }
 

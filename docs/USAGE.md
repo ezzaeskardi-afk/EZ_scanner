@@ -218,6 +218,11 @@ ezscan selftest    # probes a few real edges and says whether the line or the se
   `--preset irancell` for a line that caps new sessions, `mci` for one that resets them,
   `mobin` for fiber whose transfer stalls. No operator behaviour found means `--preset
   standard` is fine.
+- `doctor` says **the measurement could not name a preset** → this one is not a parameter to lower.
+  It means the control row agreed with the failure: not one probe completed even with an idle line,
+  so the path is not carrying the request (SNI/tunnel mismatch, or a network that blocks it). Check
+  the `DNS lookup` row too — a resolver that answers nothing fails there instead of pretending to
+  be fine, and it breaks every domain source while leaving IP lists untouched.
 - `selftest` is green but your scan is not → the gates are strict: `minScore` to `0`, WS and
   idle off, and the Gentle preset.
 

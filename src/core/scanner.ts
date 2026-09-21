@@ -48,6 +48,23 @@ interface ScannerEvents {
   done: { stats: ScanStats; results: IpResult[] };
 }
 
+/**
+ * Failure kinds that say "the line would not carry this right now" rather than "this address does
+ * not serve what you asked for". Only these are worth retrying once the window has passed.
+ */
+const NETWORK_FAILURE_KINDS = new Set(['timeout', 'reset', 'refused']);
+
+/**
+ * How many turned-away addresses the recovery pass keeps.
+ *
+ * Deliberately far above `FAILURE_SAMPLE_LIMIT`: that cap exists to keep the *diagnostic samples*
+ * small, and reusing it here meant a bad window wider than 300 addresses was only ever retried for
+ * its first 300 — at the presets' ~11 addresses/s a one-minute block covers over 600, so the
+ * addresses at the end of the window were lost until the next scan, which is the one thing the
+ * pass exists to prevent.
+ */
+const RECOVERY_CANDIDATE_LIMIT = 5000;
+
 interface StartOptions {
   resumeFrom?: SessionSnapshot;
   /** Applied on top of the snapshot config when resuming. */
@@ -108,6 +125,12 @@ export class Scanner extends Emitter<ScannerEvents> {
   private bucket: TokenBucket;
   private backoff = new AdaptiveBackoff();
   private watchdog: NetworkWatchdog;
+  /**
+   * The addresses the line turned away, kept apart from `failures` so the recovery pass does not
+   * inherit that list's diagnostic cap (see `RECOVERY_CANDIDATE_LIMIT`).
+   */
+  private recoveryTargets: Array<{ ip: string; port: number }> = [];
+  private readonly recoverySeen = new Set<string>();
   private stats: ScanStats = initialStats();
   private samples: Array<{ at: number; done: number }> = [];
   private ticker: NodeJS.Timeout | null = null;
@@ -227,6 +250,8 @@ export class Scanner extends Emitter<ScannerEvents> {
     } else {
       this.results.clear();
       this.failures.length = 0;
+      this.recoveryTargets = [];
+      this.recoverySeen.clear();
       this.logs = [];
       this.sessionId = randomUUID();
       this.createdAt = Date.now();
@@ -463,6 +488,7 @@ export class Scanner extends Emitter<ScannerEvents> {
 
         if (result.successes === 0) {
           this.stats.failed += 1;
+          this.noteNetworkFailure(result);
           for (const [kind, count] of Object.entries(result.errorKinds ?? { other: 1 })) {
             this.stats.failuresByKind[kind] = (this.stats.failuresByKind[kind] ?? 0) + count;
           }
@@ -507,6 +533,19 @@ export class Scanner extends Emitter<ScannerEvents> {
   }
 
   /**
+   * Remembers an address the line turned away, so the recovery pass can retry it later. Deduped,
+   * and capped only by `RECOVERY_CANDIDATE_LIMIT`.
+   */
+  private noteNetworkFailure(result: IpResult): void {
+    const kinds = Object.keys(result.errorKinds ?? {});
+    if (!kinds.some((kind) => NETWORK_FAILURE_KINDS.has(kind))) return;
+    const key = resultKey(result.ip, result.port);
+    if (this.recoverySeen.has(key) || this.recoverySeen.size >= RECOVERY_CANDIDATE_LIMIT) return;
+    this.recoverySeen.add(key);
+    this.recoveryTargets.push({ ip: result.ip, port: result.port });
+  }
+
+  /**
    * One more chance for the addresses the *line* turned away.
    *
    * A block or a throttle lasts seconds, and every attempt an address gets inside that window
@@ -519,20 +558,13 @@ export class Scanner extends Emitter<ScannerEvents> {
    * carry this right now", while `http`/`tls`/`dns` say "this address does not serve what you
    * asked for" and will not change on a retry. The retry gets a **fresh** record so the outage is
    * not charged to the address as loss, and a failed retry leaves the original verdict intact.
+   *
+   * The candidate list is every address the line turned away (`noteNetworkFailure`), not the
+   * capped diagnostic sample, and the retries spend the scan's own rate-limit budget.
    */
   private async recoveryProbe(): Promise<void> {
     if (!this.config.recoveryPass || this.abort.signal.aborted) return;
-    const NETWORK_KINDS = new Set(['timeout', 'reset', 'refused']);
-    const candidates: Array<{ ip: string; port: number }> = [];
-    const seen = new Set<string>();
-    for (const failure of this.failures) {
-      const kinds = Object.keys(failure.errorKinds ?? {});
-      if (!kinds.some((kind) => NETWORK_KINDS.has(kind))) continue;
-      const key = resultKey(failure.ip, failure.port);
-      if (seen.has(key) || this.results.has(key)) continue;
-      seen.add(key);
-      candidates.push({ ip: failure.ip, port: failure.port });
-    }
+    const candidates = this.recoveryTargets.filter((c) => !this.results.has(resultKey(c.ip, c.port)));
     if (!candidates.length) return;
 
     const workers = Math.max(1, Math.min(4, this.config.workers));
@@ -554,6 +586,11 @@ export class Scanner extends Emitter<ScannerEvents> {
       }
       const result = createResult(candidate.ip, candidate.port, this.config.sni);
       const sni = this.pickSni(0);
+      // The retries are part of the same scan, so they obey the same global rate limit: a
+      // recovery pass that ignored `--rate` would hand the line exactly the burst the preset was
+      // chosen to avoid, and get its own retries refused.
+      await this.bucket.acquire(this.abort.signal);
+      if (this.abort.signal.aborted) return;
       const probed = await probeOnce({ ip: candidate.ip, port: candidate.port, sni }, this.config, this.abort.signal, sni);
       if (this.abort.signal.aborted && !probed.ok) return;
       recordAttempt(result, probed);
@@ -575,6 +612,9 @@ export class Scanner extends Emitter<ScannerEvents> {
       const kept = this.failures.filter((f) => !recovered.includes(resultKey(f.ip, f.port)));
       this.failures.length = 0;
       this.failures.push(...kept);
+      this.recoveryTargets = this.recoveryTargets.filter((c) => !recovered.includes(resultKey(c.ip, c.port)));
+      this.recoverySeen.clear();
+      for (const c of this.recoveryTargets) this.recoverySeen.add(resultKey(c.ip, c.port));
       this.log('ok', `recovered ${recovered.length} address${recovered.length === 1 ? '' : 'es'} the line had turned away`);
     }
     this.stats.message = '';
@@ -696,6 +736,11 @@ export class Scanner extends Emitter<ScannerEvents> {
     for (const r of snapshot.results) this.results.set(resultKey(r.ip, r.port), r);
     this.failures.length = 0;
     for (const f of snapshot.failures ?? []) this.failures.push(f);
+    // A snapshot only carries the diagnostic sample, so a resumed scan retries those addresses —
+    // the same set the run it came from had noted at the time of the save.
+    this.recoveryTargets = [];
+    this.recoverySeen.clear();
+    for (const failure of this.failures) this.noteNetworkFailure(failure);
     this.stats = {
       ...initialStats(),
       ...snapshot.stats,

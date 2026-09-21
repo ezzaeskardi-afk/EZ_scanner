@@ -1,5 +1,72 @@
 # Changelog
 
+## 1.6.1 — 2026-09-22
+
+A review pass over the whole tree, and every entry below came out of asking the code to prove what
+it claims rather than reading it. The two that matter most were both in `ezscan doctor`, the tool
+whose entire job is to tell a broken line from a broken scanner: it reported **`DNS lookup: ok`**
+on a line where the resolver answered nothing at all, and it named a **concurrency cap** on a line
+where its own control row showed that not one probe completed even with nothing else open. The rest
+is a recovery pass that only ever retried the first 300 addresses it had noted, retries that
+ignored the scan's own rate limit, a documented `--no-speed` that reached only `resume`, a GUI that
+died a tick after printing its URL on a machine without a browser helper, and two smaller reporting
+inaccuracies.
+
+### Fixed
+- **`ezscan doctor` no longer reports a dead resolver as "ok".** `defaultResolve` reports "could not
+  resolve" by returning `[]`, so the row keyed on `answers.length` was unreachable: the check said
+  `DNS lookup — ok: cloudflare.com → no answer` while every domain source was probing nothing. The
+  verdict is now judged on whether any probe name answered, with its own hint (scan by IP — an SNI
+  is never resolved), and the DoH row stops claiming an answer "is being tampered with" when the
+  system resolver said nothing at all: a failing lookup and a rewritten answer are different
+  problems with different fixes.
+- **A failed control disqualifies the line signature.** "The probes failed while the burst was held"
+  is only evidence of a *cap* if the same probes complete with nothing else open. Measured on a
+  filtered line (0 of 4 idle probes completed, 5 of 6 under load), the verdict was still "the line
+  caps how many sessions you may hold at once … `--workers` is the lever" — pointing the user at a
+  parameter when the path was not carrying the request at all. The idle probes are now a real
+  control: when none of them completes and none was reset, no preset is named, the reason says why,
+  and both the CLI and the GUI print that note instead of dropping it (a recommendation with no
+  preset was previously filtered out of the report entirely).
+- **The recovery pass retries every address the line turned away, not the first 300.** Its
+  candidates came from the diagnostic failure list, which is capped at `FAILURE_SAMPLE_LIMIT` (300)
+  to keep samples small — so a bad window wider than that left everything past the 300th address
+  lost until the next scan (at the presets' ~11 addresses/s a one-minute block covers over 600). The
+  candidates now have their own list, and the retries **obey the scan's rate limit**: a pass that
+  ignored `--rate` would hand the line exactly the burst the chosen preset exists to avoid, and get
+  its own retries refused.
+- **`--no-speed` works on `scan`, not only on `resume`.** `docs/USAGE.md` documents
+  `ezscan scan --preset mobin --count 5000 --no-speed …` as the way to leave the speed phase out on
+  a line with a broken PMTU; a scan ignored the flag and ran the phase anyway.
+- **Boolean options can no longer eat the next argument.** `--all`, `--no-speed` and `--version`
+  were read through `flags.has()` but not registered as boolean, so the parser treated them as
+  "takes a value": `ezscan resume --no-speed a1b2c3d4` consumed the session id and printed the usage
+  text. Both flags are documented in `--help` now, and a static check keeps the list in step with
+  every `flags.has()` in the parser.
+- **`ezscan gui` survives a machine with no browser helper.** The helper is spawned detached, so a
+  missing one fails *asynchronously*: `spawn` emits `error`, and an unhandled `error` event is
+  thrown. The process died a tick after printing the URL — the server was up, the browser was not,
+  and a headless Linux box (where the GUI is most useful) has no `xdg-open`. The opener now lives in
+  `src/cli/openbrowser.ts` with its failure contained and tested.
+- **The recovery flag reaches the exports.** `recovered` ("found on the second chance, after the
+  line blocked part of the sweep") was set on the result and read by nothing but tests — the CSV and
+  XLSX columns now carry it, appended so nothing that parses the existing columns breaks.
+- **`--print` counts the rows it actually hid.** The table shows the healthy rows when there are
+  any, so the "… N more rows" line reported rows that were never going to be printed.
+
+### Tests
+- 166 tests. The new ones pin the two `doctor` verdicts as pure functions (`judgeDns`,
+  `classifyLine` with a failing control), the recovery pass's candidate list separately from the
+  diagnostic sample (400 turned-away addresses on ten fake lines, which the 300 cap used to truncate
+  to exactly 300), the CLI's boolean-flag registry, `--no-speed` on a real local scan, the browser
+  opener's contained failure, and the `recovered` column. Each one was verified by breaking the fix
+  it covers and watching that test fail.
+- One **flaky test made deterministic** while reviewing: the reset/back-off case needs both tails of
+  a 15%-success coin, and twelve addresses gave neither (P(not one address lost every try) ≈ 8.5e-4 —
+  how it failed in CI: "a reset is reported as a reset … saw: " with an empty breakdown, because
+  every address had found a session). 24 addresses put both tails under 1e-6; 30 consecutive local
+  runs of the old form reproduced the failure once and of the new form none.
+
 ## 1.6.0 — 2026-09-20
 
 This release is about *usable* addresses. `ezscan doctor` now measures what the line does to a
