@@ -107,6 +107,15 @@ export function sanitizeConfig(input: Partial<ScanConfig>, base: ScanConfig = DE
   if (patch.rateLimitPerSec !== undefined) merged.rateLimitPerSec = int(patch.rateLimitPerSec, base.rateLimitPerSec, 0, 5000);
   if (patch.minDelayMs !== undefined) merged.minDelayMs = int(patch.minDelayMs, base.minDelayMs, 0, 10_000);
   if (patch.adaptiveBackoff !== undefined) merged.adaptiveBackoff = bool(patch.adaptiveBackoff, base.adaptiveBackoff);
+  // These two were the only `ScanConfig` fields with no branch here, so every value that reached
+  // them from a preset or a flag was dropped on the floor: the three operator presets' retry gap
+  // and recovery pass never applied, `--retry-gap` did nothing, and `--no-recovery` turned off
+  // something that was already off (the default). `test/config-fields.test.ts` now walks the
+  // config and fails if a field is added here-less again.
+  if (patch.betweenTriesMs !== undefined) {
+    merged.betweenTriesMs = int(patch.betweenTriesMs, base.betweenTriesMs, 0, 10_000);
+  }
+  if (patch.recoveryPass !== undefined) merged.recoveryPass = bool(patch.recoveryPass, base.recoveryPass);
   if (patch.autoPauseOnNetworkLoss !== undefined) {
     merged.autoPauseOnNetworkLoss = bool(patch.autoPauseOnNetworkLoss, base.autoPauseOnNetworkLoss);
   }

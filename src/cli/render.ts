@@ -170,5 +170,6 @@ export function nextStepHints(): string[] {
     'shorter feedback loop:  ezscan scan --preset fast --count 200 --mode tcp',
     'long scan: add --session "my run" and resume later with  ezscan resume <id>',
     'line gets cut mid-scan: lower --workers / set --rate 12 so the operator does not react',
+    'unknown line:  ezscan doctor  measures what the line does and names the preset to scan with',
   ];
 }

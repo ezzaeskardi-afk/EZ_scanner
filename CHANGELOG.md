@@ -1,5 +1,61 @@
 # Changelog
 
+## 1.7.0 — 2026-09-22
+
+The doctor could already read a line and name the preset it needs, and the scan then ignored the
+name until the user retyped it — so the flow the doctor exists for (`doctor`, then scan the line it
+just diagnosed) ran `standard` on a line the tool had already measured. A scan now applies that
+measurement itself and says so. Testing it turned up two defects the measurement had been hiding,
+both older than this release: the retry gap and the recovery pass **never reached the scanner at
+all** (`sanitizeConfig`, the funnel every surface goes through, had no branch for either field, so
+the three operator presets' spacing and their second chance were dropped on the floor), and a
+finished CLI scan **sat for ~4 seconds** before the process exited, because two timeouts outlived
+the connections they belonged to.
+
+### Added
+- **A scan applies the preset the last `doctor` run measured.** The measurement is written next to
+  the saved sessions when the doctor takes it, and read back by the next scan: the flags the run
+  actually uses are the measured ones, and the line above the run says which and why. It expires
+  after 12 hours on purpose — an operator's throttling is a property of the hour, not of the
+  address, and a day-old verdict steering `--workers`/`--rate` would be the guesswork the
+  measurement exists to remove. Past the window the scan names the command that refreshes it
+  (`ezscan doctor`) rather than applying it silently, and withholds the reading. An explicit
+  `--preset` always wins, and `--no-adapt` uses the flags exactly as typed. A measurement that named
+  no preset is still a measurement — "nothing operator-specific here" — but it is applied silently,
+  since `standard` is what the scan would have used anyway.
+- **The GUI's recommendation is now an action.** The doctor banner already named the preset; it now
+  carries a button that applies it through the same path the preset buttons use, so the reading and
+  the settings are one click apart instead of two.
+
+### Fixed
+- **The retry gap and the recovery pass reach the scanner.** `sanitizeConfig` is the one funnel
+  every surface goes through — CLI flags, the presets, the GUI's `/api/config` and `/api/preset`, a
+  resumed session's overrides — and `betweenTriesMs` and `recoveryPass` were the only two
+  `ScanConfig` fields without a branch in it. Consequences: the operator presets' 150–350ms spacing
+  never applied, the recovery pass that 1.6.0 announced never ran from the CLI or the GUI at all
+  (`recoveryPass` defaults to `false`), `--retry-gap` was inert, and `--no-recovery` switched off
+  something that was already off. A gate now walks `DEFAULT_CONFIG` and fails on any field with no
+  branch here, so the next one cannot repeat it.
+- **A scan exits as soon as it is done.** A short run printed its results and then took another
+  ~4.2 seconds to return to the shell (against 0.17s now). Two leaks: a *failed* `tcpConnect`/
+  `tlsConnect` cleared its timeout only on the success path, so every refused, reset or aborted
+  dial held the event loop open for the rest of its timeout; and the line watchdog armed a fresh
+  interval timer *after* its `await`, undoing the `stop()` that had already run — while being
+  unable to cancel a canary dial that was still waiting for an answer. On a line where the first
+  canary never answers (Irancell/MCI, and fiber ONUs with the same block) that was the normal case,
+  not an edge one.
+
+### Tests
+- 192 tests (+26). The new ones pin the stored measurement and the adoption rule as a pure
+  function (its 12-hour window inclusive at the edge, a clock that ran backwards read as fresh,
+  `--no-adapt`, an explicit `--preset`, a corrupt or hand-edited file read as no measurement), the
+  scan actually *running* with the adopted preset (read back from the saved session, not from a
+  printed line), the config-field gate, and the two timer leaks from both inside the process
+  (`getActiveResourcesInfo`) and from outside it (a child that opens one failing connection and has
+  to exit). Each fix was verified to bite: removing the timer clear fails three of them, removing
+  the watchdog's re-check and its abort fails the round-trip test, renaming a `patch.<field>` fails
+  the gate and both behavioural tests, and dropping the window check fails the two stale ones.
+
 ## 1.6.1 — 2026-09-22
 
 A review pass over the whole tree, and every entry below came out of asking the code to prove what

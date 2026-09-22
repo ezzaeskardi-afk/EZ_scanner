@@ -86,7 +86,12 @@ export class AdaptiveBackoff {
   }
 }
 
-type CanaryDial = (canary: string, timeoutMs: number) => Promise<void>;
+/**
+ * How one canary is dialled. The signal is the watchdog's own: it fires when the scan is over, so
+ * a connect that is still waiting for an answer can be abandoned instead of holding the process
+ * open for the rest of its timeout.
+ */
+type CanaryDial = (canary: string, timeoutMs: number, signal?: AbortSignal) => Promise<void>;
 
 export interface WatchdogOptions {
   /**
@@ -147,9 +152,9 @@ const REACHABLE_EVIDENCE = new Set(['ECONNREFUSED', 'ECONNRESET', 'EPIPE']);
  * question ("does anything at all answer on this path?"), and it is the cheapest way to
  * ask it without dragging a full probe into the watchdog.
  */
-const dialCanary: CanaryDial = async (canary, timeoutMs) => {
+const dialCanary: CanaryDial = async (canary, timeoutMs, signal) => {
   const [host, portStr] = canary.split(':');
-  const conn = await tcpConnect(host, Number(portStr || 443), { timeoutMs });
+  const conn = await tcpConnect(host, Number(portStr || 443), { timeoutMs, ...(signal ? { signal } : {}) });
   conn.socket.destroy();
 };
 
@@ -172,6 +177,8 @@ export class NetworkWatchdog extends Emitter<WatchdogEvents> {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
   private inFlight = false;
+  /** The dial in flight, so `stop()` can abandon it instead of waiting its timeout out. */
+  private dialAbort: AbortController | null = null;
   private consecutiveFailures = 0;
   private readonly opts: WatchdogOptions;
 
@@ -209,6 +216,11 @@ export class NetworkWatchdog extends Emitter<WatchdogEvents> {
       if (!this.running) return;
       const enabled = this.opts.enabled ? this.opts.enabled() : true;
       if (enabled && !this.inFlight) await this.check();
+      // Checked again *after* the await, which is the whole point: `stop()` usually runs while this
+      // check is still dialling, and it cleared the timer that was armed at the time. Arming a
+      // fresh one here kept the process alive for another full interval after `ezscan scan` had
+      // printed its results — measured at ~4s per short scan, against 1.2s with the watchdog off.
+      if (!this.running) return;
       this.timer = setTimeout(tick, this.intervalMs);
     };
     // Check once immediately: waiting a whole interval left the first seconds of a scan
@@ -220,6 +232,13 @@ export class NetworkWatchdog extends Emitter<WatchdogEvents> {
     this.running = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    // A check already running is a socket with a pending connect and a timeout of its own. On a
+    // line where the first canary never answers, that socket kept the *process* alive for the rest
+    // of its timeout after `ezscan scan` had printed its results and saved the session — measured
+    // at 4.2s per scan here, ~7.5s when all three built-in canaries are blocked. Nobody is waiting
+    // for the answer at this point, so the dial is aborted rather than waited out.
+    this.dialAbort?.abort();
+    this.dialAbort = null;
   }
 
   /**
@@ -244,11 +263,13 @@ export class NetworkWatchdog extends Emitter<WatchdogEvents> {
     this.inFlight = true;
     const canaries = this.canaries;
     const dial = this.opts.dial ?? dialCanary;
+    const controller = new AbortController();
+    this.dialAbort = controller;
     let connected = false;
     let refusedBy = '';
     for (const canary of canaries) {
       try {
-        await dial(canary, this.timeoutMs);
+        await dial(canary, this.timeoutMs, controller.signal);
         connected = true;
         break;
       } catch (err) {
@@ -259,8 +280,13 @@ export class NetworkWatchdog extends Emitter<WatchdogEvents> {
           break;
         }
       }
+      // Abandoned by `stop()`: the watchdog is off, so this round has no verdict to publish and
+      // must not count as a failed check (which would flip the line to "offline" on the way out).
+      if (controller.signal.aborted) break;
     }
     this.inFlight = false;
+    this.dialAbort = null;
+    if (controller.signal.aborted) return !this.state.offline;
     this.state.checks += 1;
     this.state.lastCheckAt = Date.now();
     this.state.canaries = canaries;

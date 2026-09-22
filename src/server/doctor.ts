@@ -10,6 +10,7 @@ import { constants } from 'node:fs';
 import net from 'node:net';
 import { resolve } from 'node:path';
 import { DEFAULT_CONFIG } from '../core/types.ts';
+import { saveLineSignature } from '../core/linesig.ts';
 import { defaultResolve } from '../core/ipsrc.ts';
 import { measureDownload, probeOnce } from '../core/probe.ts';
 import { readUntil, tcpConnect, tlsConnect, type ConnectedSocket } from '../core/net.ts';
@@ -693,6 +694,15 @@ export async function runDoctor(dataDir: string, sampleSni = 'www.cloudflare.com
           ? 'none — the measurement has something to say, but no preset fits it (see below)'
           : 'none — no operator-specific behaviour found, so scan with --preset standard',
       hint: recommendation.reasons.length ? recommendation.reasons.join('; ') : undefined,
+    });
+    // Remembered for the next scan. Naming the preset here is only half an answer while the scan
+    // still has to be told the name again by hand — see `src/core/linesig.ts` for why the reading
+    // is allowed to expire. A failure is not reported: the "session folder" row above already
+    // fails when the folder cannot be written, and nothing else changes if this file is missing.
+    await saveLineSignature(dataDir, {
+      preset: recommendation.preset,
+      reasons: recommendation.reasons,
+      ip: signature.ip,
     });
   } catch (err) {
     checks.push({ name: 'line signature', ok: true, detail: `not measured: ${(err as Error).message}` });

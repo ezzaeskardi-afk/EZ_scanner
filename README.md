@@ -3,7 +3,7 @@
 **Find clean Cloudflare IPs for SNI-fronted tunnels — with a real GUI and a complete CLI.**
 Clean-IP discovery for Cloudflare fronted tunnels (vless / vmess / trojan / BPB style), with a local GUI, a scriptable CLI, resumable scans and honest diagnostics.
 
-[![tests](https://img.shields.io/badge/tests-166%20passing-brightgreen)](#tests)
+[![tests](https://img.shields.io/badge/tests-192%20passing-brightgreen)](#tests)
 [![node](https://img.shields.io/badge/node-%E2%89%A522.18-blue)](#install)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
@@ -129,6 +129,11 @@ that were actually reachable. They also space their retries (`--retry-gap`) and 
 addresses the line itself turned away** once the window has passed (`--no-recovery` to disable);
 the same line, blocked for three seconds mid-sweep, went from 13/40 to 37/40 addresses found.
 
+After `ezscan doctor` has measured your line, the next `ezscan scan` **applies the preset it named
+by itself** (for 12 hours — an operator's throttling is a property of the hour, not of the
+address) and says which one it used and why. An explicit `--preset` wins, and `--no-adapt` scans
+with exactly the flags you gave.
+
 ---
 
 ## CLI
@@ -145,6 +150,8 @@ ezscan sessions                                # list sessions
 ezscan export a1b2c3d4 --format links --link-template "vless://…" --out links.txt
 ezscan doctor                                  # DNS (tampering included) /TCP/TLS/HTTP/throughput
                                               # + the line's signature and the preset it needs
+                                              # (the next scan applies that preset by itself;
+                                              #  --no-adapt keeps your own flags)
 ezscan selftest                                # "is it my line or my settings?"
 ezscan config "vless://…"                      # SNI/port/transport of a config
 ezscan scan --help                             # every option
@@ -228,8 +235,9 @@ exact address, even after a reboot.
 the line or the gates are at fault. If selftest is green, set `minScore` to `0` and keep
 WS/idle off. If doctor flags the resolver, the line is rewriting DNS answers: scan by IP
 (the Cloudflare or Paste source) instead of by domain — and a resolver that answers nothing is
-reported as a failure, not as "no answer". If doctor names a preset, that is the answer:
-`ezscan scan --preset <name>` uses the settings that line needs. If it says the measurement could
+reported as a failure, not as "no answer". If doctor names a preset, that is the answer — and the
+next `ezscan scan` picks it up on its own (`--preset <name>` says it explicitly, `--no-adapt`
+ignores it). If it says the measurement could
 not name one, that is a real answer too: not one probe completed even on an idle line, so the
 problem is the path to your edge (SNI, tunnel host, or a network that blocks it), not the scan
 parameters.
@@ -253,10 +261,10 @@ src/
   gui/       build-free UI (plain HTML/CSS/JS, English-only) + vendor/openui
   cli/       command line
 scripts/     maintenance tooling: OpenUI style pruning (no build step, gated in CI)
-test/        166 tests: probe against a local TLS server, stop/resume, snapshots, API and
+test/        192 tests: probe against a local TLS server, stop/resume, snapshots, API and
              security, exports, the OpenUI report, the HTML/CSS/JS contract, the CLI run as
-             a user runs it, the line-signature measurement that names a preset, the
-             dead-code / version / pruned-stylesheet gates
+             a user runs it, the line-signature measurement that names a preset and the scan
+             that adopts it, the dead-code / config-field / version / stylesheet gates
 ```
 
 Design philosophy: **no runtime dependencies** (only devDependencies for type checking),
@@ -296,7 +304,7 @@ chart = BarChart(chartLabels, [chartSeries], "grouped", "latency bucket", "Addre
 
 ```bash
 npm run typecheck
-npm test                  # 166 tests: probe engine, gating, pause/resume, snapshots,
+npm test                  # 192 tests: probe engine, gating, pause/resume, snapshots,
                           # exports, HTTP API, OpenUI report, GUI contract, CLI, dead code,
                           # and integration runs against a fake hostile access network
 npm run check:openui-css  # the vendored OpenUI stylesheet is still minimal, complete and correctly pinned

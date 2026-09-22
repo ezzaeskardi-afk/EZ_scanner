@@ -17,6 +17,45 @@ import { startFakeTcp } from './helpers/localnet.ts';
 /** RFC 5737 TEST-NET-1: never routable, so a connect there is never answered. */
 const BLACKHOLE = '192.0.2.1:443';
 
+/** Armed timers right now — what keeps a finished process from exiting. */
+function armedTimers(): number {
+  return process.getActiveResourcesInfo().filter((kind) => kind === 'Timeout').length;
+}
+
+test('stopping the watchdog abandons a dial in flight and arms no further tick', async () => {
+  // Two leaks in one loop, both of which kept the CLI alive for ~4s after it had printed:
+  // `stop()` could not cancel a dial that was already waiting for a canary (on a line where
+  // 1.1.1.1 never answers, the normal case), and `tick` armed a fresh interval *after* its await,
+  // undoing the `stop()` that had run while it waited.
+  let aborted = false;
+  let dialStarted = (): void => {};
+  const started = new Promise<void>((resolve) => {
+    dialStarted = resolve;
+  });
+  const watchdog = new NetworkWatchdog({
+    dial: (_canary, _timeoutMs, signal) => {
+      dialStarted();
+      return new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => {
+          aborted = true;
+          reject(new Error('aborted'));
+        });
+      });
+    },
+    intervalMs: 60_000,
+    timeoutMs: 60_000,
+  });
+  const before = armedTimers();
+  watchdog.start();
+  await started;
+  watchdog.stop();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(aborted, true, 'the dial was abandoned instead of waited out');
+  assert.equal(watchdog.state.checks, 0, 'an abandoned dial is not a check, so it cannot fail one');
+  assert.equal(watchdog.state.offline, false, 'and it must not park the line on the way out');
+  assert.ok(armedTimers() <= before, 'no interval timer may outlive stop()');
+});
+
 test('the token bucket is unlimited at rate 0 and paces at the configured rate', async () => {
   const unlimited = new TokenBucket(0);
   const started = Date.now();

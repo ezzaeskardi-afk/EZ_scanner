@@ -90,6 +90,8 @@ const T = {
   diagOk: 'ok',
   diagFail: 'fail',
   diagPreset: (preset) => `This line has a signature — scan it with --preset ${preset}`,
+  diagApply: (preset) => `Apply --preset ${preset}`,
+  diagApplied: (preset) => `the config now has the ${preset} preset`,
   diagNoPreset: 'No preset fits what was measured — see the reasons',
   shutting: 'The EZ Scanner server stopped — you can close this tab.',
   kind: {
@@ -944,20 +946,25 @@ function wire() {
     paintLive();
   });
 
+  /**
+   * Applies a preset to the config form. Shared by the preset buttons and by the doctor's
+   * recommendation, which is the same action one click away from the measurement that produced it.
+   */
+  async function applyPreset(name) {
+    const res = await api('/api/preset', { name });
+    state.config = res.config;
+    configToForm(res.config);
+    for (const b of $$('.presets button')) b.classList.toggle('active', b.dataset.preset === name);
+    if (res.warnings?.length) {
+      $('#config-warnings').textContent = res.warnings.join(' | ');
+      toast(res.warnings[0], 7000);
+    }
+    return res;
+  }
+
   for (const btn of $$('.presets button')) {
-    btn.addEventListener('click', async () => {
-      try {
-        const res = await api('/api/preset', { name: btn.dataset.preset });
-        state.config = res.config;
-        configToForm(res.config);
-        for (const b of $$('.presets button')) b.classList.toggle('active', b === btn);
-        if (res.warnings?.length) {
-          $('#config-warnings').textContent = res.warnings.join(' | ');
-          toast(res.warnings[0], 7000);
-        }
-      } catch (err) {
-        toast(err.message);
-      }
+    btn.addEventListener('click', () => {
+      void applyPreset(btn.dataset.preset).catch((err) => toast(err.message));
     });
   }
 
@@ -1205,7 +1212,7 @@ function wire() {
       // A measurement with reasons and no preset is the doctor saying "this is not a parameter to
       // lower": worth the same banner, without a command that would not help.
       const verdict = recommended?.preset
-        ? `<div class="warn-note"><b>${escapeHtml(T.diagPreset(recommended.preset))}</b>\n   → ${escapeHtml((recommended.reasons ?? []).join('\n   '))}</div>`
+        ? `<div class="warn-note"><b>${escapeHtml(T.diagPreset(recommended.preset))}</b>\n   → ${escapeHtml((recommended.reasons ?? []).join('\n   '))}\n   <button type="button" data-diag-preset="${escapeHtml(recommended.preset)}">${escapeHtml(T.diagApply(recommended.preset))}</button></div>`
         : recommended?.reasons?.length
           ? `<div class="warn-note"><b>${escapeHtml(T.diagNoPreset)}</b>\n   → ${escapeHtml(recommended.reasons.join('\n   '))}</div>`
           : '';
@@ -1221,6 +1228,17 @@ function wire() {
     } catch (err) {
       $('#doctor-out').textContent = err.message;
     }
+  });
+
+  // The recommendation is the one line of the report worth acting on, so it carries the action:
+  // applying the preset the doctor just measured, through the same path the preset buttons use.
+  $('#doctor-out').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-diag-preset]');
+    if (!btn) return;
+    const name = btn.dataset.diagPreset;
+    void applyPreset(name)
+      .then(() => toast(T.diagApplied(name)))
+      .catch((err) => toast(err.message));
   });
 
   $('#log-filter').addEventListener('change', renderLogs);

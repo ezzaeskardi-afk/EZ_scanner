@@ -12,6 +12,7 @@ import { dirname, resolve } from 'node:path';
 import { parseShareLink, isParsedConfig, describeConfig, sniRiskWarnings } from '../core/configparse.ts';
 import { exportResults, summarize, type ExportFormat } from '../core/export.ts';
 import { Scanner, defaultDataDir } from '../core/scanner.ts';
+import { adoptPreset, loadLineSignature } from '../core/linesig.ts';
 import { applyPreset, DEFAULT_CONFIG, PRESETS, type ScanConfig, type SourceSpec } from '../core/types.ts';
 import { sanitizeConfig, sanitizeSource } from '../core/validate.ts';
 import { createEzServer } from '../server/server.ts';
@@ -19,7 +20,7 @@ import { runDoctor, runSelfTest } from '../server/doctor.ts';
 import { openBrowser } from './openbrowser.ts';
 import { Output, RESULT_HEADERS, nextStepHints, printDoctor, resultRow } from './render.ts';
 
-const VERSION = '1.6.1';
+const VERSION = '1.7.0';
 
 /* ───────────────────────────── arg parsing ───────────────────────────── */
 
@@ -46,6 +47,7 @@ const BOOL_FLAGS = new Set([
   'no-speed',
   'no-backoff',
   'no-recovery',
+  'no-adapt',
   'no-autopause',
   'no-early-exit',
   'all',
@@ -238,6 +240,22 @@ function printFailureBreakdown(out: Output, scanner: Scanner): void {
 
 async function cmdScan(args: Args): Promise<number> {
   const out = out0(args);
+  // The doctor already read this line; a scan that ignores that reading is the diagnosis going to
+  // waste, so the remembered preset is applied here and printed rather than left to be retyped.
+  const adoption = adoptPreset({
+    explicit: args.values.get('preset'),
+    stored: await loadLineSignature(defaultDataDir()),
+    now: Date.now(),
+    disabled: args.flags.has('no-adapt'),
+  });
+  if (adoption.preset) args.values.set('preset', adoption.preset);
+  if (adoption.notice) {
+    out.line(out.paint('yellow', `⚠ ${adoption.notice}`));
+    for (const reason of adoption.reasons) out.line(out.paint('dim', `  → ${reason}`));
+    if (adoption.adopted) {
+      out.line(out.paint('dim', '  → --preset <name> or --no-adapt scans with exactly the flags you gave'));
+    }
+  }
   const { config, warnings } = buildConfig(args);
   const source = await buildSource(args);
   const scanner = new Scanner(defaultDataDir());
@@ -501,6 +519,7 @@ scan options
   --timeout <ms> --workers <n> --latency <ms> --loss <pct> --score <n>
   --retry-gap <ms>          pause between attempts at one address (default 0)
   --no-recovery             do not retry addresses the line itself turned away
+  --no-adapt                ignore the preset the last "ezscan doctor" measured for this line
   --ws / --no-ws            require a WebSocket upgrade (default: off)
   --idle <ms>               idle-hold DPI check (default: off)
   --no-http                 skip the HTTP response check
@@ -520,6 +539,8 @@ examples
   ezscan scan --source config --config "vless://…" --speed --xlsx found.xlsx
   ezscan resume a1b2c3d4
   ezscan doctor
+"ezscan scan" applies the preset the last "doctor" run measured for this line (up to 12 hours old).
+An explicit --preset or --no-adapt overrides it.
 `;
 }
 

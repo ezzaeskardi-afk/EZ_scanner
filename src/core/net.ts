@@ -54,13 +54,20 @@ export function tcpConnect(host: string, port: number, opts: ConnectOptions): Pr
     const started = process.hrtime.bigint();
     const socket = net.connect({ host, port, ...(opts.localAddress ? { localAddress: opts.localAddress } : {}) });
     let settled = false;
+    // The pending timeout is cleared on *every* way out, not only on success. A dial that fails
+    // early — a refused canary, a reset, or an aborted one — used to leave its timer armed, which
+    // keeps the event loop busy for the rest of the timeout: a short `ezscan scan` sat ~1.5s after
+    // printing its results because of exactly that. Declared before `fail` because `attachAbort`
+    // calls it synchronously when the signal is already aborted.
+    let timer: NodeJS.Timeout | null = null;
     const fail = (err: Error) => {
       if (settled) return;
       settled = true;
+      if (timer) clearTimeout(timer);
       socket.destroy();
       reject(err);
     };
-    const timer = setTimeout(() => fail(new TimeoutError(`tcp connect timeout ${host}:${port}`)), opts.timeoutMs);
+    timer = setTimeout(() => fail(new TimeoutError(`tcp connect timeout ${host}:${port}`)), opts.timeoutMs);
     const detach = attachAbort(socket, opts.signal, fail);
     socket.setNoDelay(true);
     socket.on('error', (err) => fail(err));
@@ -100,13 +107,17 @@ export function tlsConnect(
     });
     socket.setKeepAlive(true, 15_000);
     let settled = false;
+    // Cleared on every way out — see the note in `tcpConnect`: a failed or aborted handshake left
+    // its timer armed and held the process open for the rest of the timeout.
+    let timer: NodeJS.Timeout | null = null;
     const fail = (err: Error) => {
       if (settled) return;
       settled = true;
+      if (timer) clearTimeout(timer);
       socket.destroy();
       reject(err);
     };
-    const timer = setTimeout(
+    timer = setTimeout(
       () => fail(new TimeoutError(`tls handshake timeout ${host}:${port}`)),
       opts.timeoutMs,
     );

@@ -105,6 +105,22 @@ ezscan scan --preset mobin --count 5000 --no-speed --sni my.sni.example
 ezscan scan --preset irancell --no-recovery --retry-gap 0   # back to the plain sweep
 ```
 
+**You do not have to name the preset if you have just run `doctor`.** The measurement it takes is
+remembered (next to your saved sessions, for 12 hours) and the next `ezscan scan` applies it itself,
+saying so above the run:
+
+```
+⚠ doctor measured this line 8 minutes ago and it needs --preset irancell
+  → 12 sessions opened at the same time were turned away … so the cap is on concurrency and --workers is the lever
+  → --preset <name> or --no-adapt scans with exactly the flags you gave
+```
+
+An explicit `--preset` still wins, and `--no-adapt` scans with exactly the flags you gave. The
+window is 12 hours because what an operator does to a burst is a property of the hour, not of the
+address: past it the scan says the reading is too old and names the command that refreshes it,
+rather than steering `--workers`/`--rate` with yesterday's line. In the GUI the same reading comes
+with a button that applies it.
+
 If the line still struggles, halve the workers (`--workers 6`) before touching anything else:
 peak simultaneous sessions are roughly twice the worker count, and on a cheap ONU the table
 is what dies, not the scan.
@@ -212,7 +228,8 @@ ezscan selftest    # probes a few real edges and says whether the line or the se
 - `doctor` fails → the line/network is at fault (DNS, blocking, outage).
 - `doctor` is clean but `selftest` is not → TLS is probably being interfered with on your
   line; try `--mode tcp` and another SNI.
-- `doctor` names a preset → run the scan with it. The `line signature` row measures what the
+- `doctor` names a preset → the next scan uses it by itself (or run it explicitly). The
+  `line signature` row measures what the
   line does (how many sessions it lets you hold at once, whether they are killed mid-flight,
   whether a large transfer stops moving) and `recommended preset` turns that into one word:
   `--preset irancell` for a line that caps new sessions, `mci` for one that resets them,

@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -21,6 +21,22 @@ const execFileAsync = promisify(execFile);
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const cli = join(root, 'src', 'cli', 'main.ts');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { version: string };
+
+/** The config the most recent scan in a data folder actually ran with. */
+async function savedConfig(dataDir: string): Promise<Record<string, number | boolean>> {
+  const dir = join(dataDir, 'sessions');
+  const files = (await readdir(dir)).filter((f) => f.endsWith('.json') && !f.endsWith('.meta.json'));
+  assert.ok(files.length, 'the scan saved a session');
+  const snapshots = files.map(
+    (file) =>
+      JSON.parse(readFileSync(join(dir, file), 'utf8')) as {
+        updatedAt: number;
+        config: Record<string, number | boolean>;
+      },
+  );
+  snapshots.sort((a, b) => a.updatedAt - b.updatedAt);
+  return snapshots[snapshots.length - 1].config;
+}
 
 const VLESS =
   'vless://11111111-2222-3333-4444-555555555555@my.example.com:8443?type=ws&security=tls&sni=cdn.example.com&path=%2Fws#MyNode';
@@ -141,6 +157,35 @@ test('--no-speed skips the speed phase on a scan, not only on a resume', async (
     assert.doesNotMatch(skipped, /speed-testing/, 'and --no-speed leaves it out');
   } finally {
     await line.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('--retry-gap and --no-recovery reach the scan that runs, not just the parser', async () => {
+  // sanitizeConfig had no branch for `betweenTriesMs` or `recoveryPass`, so both were dropped:
+  // `--retry-gap` set nothing, `--no-recovery` turned off a value that was already off, and the
+  // operator presets never ran the recovery pass they were measured with. Asserted against the
+  // saved session, because that is the config the scan actually ran with.
+  const dataDir = await mkdtemp(join(tmpdir(), 'ez-scanner-cli-'));
+  const base = ['scan', '--source', 'paste', '--targets', '127.0.0.1', '--port', '1', '--count', '1', '--tries', '1', '--no-color'];
+  try {
+    await ezscan([...base, '--retry-gap', '300'], { EZSCAN_DATA_DIR: dataDir, NO_COLOR: '1' });
+    assert.equal((await savedConfig(dataDir)).betweenTriesMs, 300, '--retry-gap must reach the scanner');
+
+    await ezscan(['scan', '--preset', 'irancell', '--source', 'paste', '--targets', '127.0.0.1', '--port', '1', '--count', '1', '--no-color'], {
+      EZSCAN_DATA_DIR: dataDir,
+      NO_COLOR: '1',
+    });
+    const presetRun = await savedConfig(dataDir);
+    assert.equal(presetRun.betweenTriesMs, 250, "the preset's own retry gap must apply");
+    assert.equal(presetRun.recoveryPass, true, 'and so must its recovery pass');
+
+    await ezscan(['scan', '--preset', 'irancell', '--no-recovery', '--source', 'paste', '--targets', '127.0.0.1', '--port', '1', '--count', '1', '--no-color'], {
+      EZSCAN_DATA_DIR: dataDir,
+      NO_COLOR: '1',
+    });
+    assert.equal((await savedConfig(dataDir)).recoveryPass, false, '--no-recovery must be able to turn it off');
+  } finally {
     await rm(dataDir, { recursive: true, force: true });
   }
 });
