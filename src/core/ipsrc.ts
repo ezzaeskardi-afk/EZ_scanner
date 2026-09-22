@@ -494,12 +494,31 @@ export async function buildTargets(source: SourceSpec, opts: BuildOptions): Prom
   return { targets: limited, errors, notes, ranges: rangeCount, resolved };
 }
 
+/**
+ * A uniform random offset below `size`, drawn from the seeded PRNG.
+ *
+ * The draw has to span the whole modulus. It used to be a fixed 53 bits reduced with `% size`,
+ * which is uniform only while the pool fits in those 53 bits: a Cloudflare v6 range is a /32, and
+ * `(53-bit draw) % 2^96` is that same 53-bit number — so every "random" address in it came from
+ * the first 2^53 of the range. The sampler was uniform over the corner it could reach and nowhere
+ * near uniform over the space it claimed to sample (the note on the Cloudflare pools above says
+ * the sweep stays uniform over the whole announced space, which was true for v4 only).
+ *
+ * Rejection sampling fixes that without touching determinism: the same seed still produces the
+ * same list, and a pool that fits in one word still costs one draw. 26 bits per draw keeps the
+ * multiplication exact (26 + 26 = 52 < 53 bits of double precision).
+ */
 function randomBig(size: bigint, rand: () => number): bigint {
   if (size <= 1n) return 0n;
-  // 53 bits of randomness per draw is plenty for a sample offset.
-  const hi = BigInt(Math.floor(rand() * 0x2000000)) << 26n;
-  const lo = BigInt(Math.floor(rand() * 0x4000000));
-  return (hi | lo) % size;
+  const bits = (size - 1n).toString(2).length;
+  const words = Math.max(1, Math.ceil(bits / 26));
+  const shift = BigInt(words * 26 - bits);
+  for (;;) {
+    let draw = 0n;
+    for (let i = 0; i < words; i++) draw = (draw << 26n) | BigInt(Math.floor(rand() * 0x4000000));
+    draw >>= shift;
+    if (draw < size) return draw;
+  }
 }
 
 let sharedResolver: dns.promises.Resolver | null = null;

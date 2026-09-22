@@ -199,6 +199,20 @@ interface DrainResult {
   firstByteMs: number;
   ended: boolean;
   /**
+   * Why reading stopped. `ended` alone could not tell a *finished* transfer from a *cut* one:
+   * a socket error and a peer's FIN both arrived as "not the deadline", so a transfer the path
+   * reset halfway through was reported with the throughput it happened to have reached
+   * (see `measureDownload`).
+   *   - `target`: the requested number of bytes arrived;
+   *   - `close`: the peer closed the stream first (a shorter body than asked for);
+   *   - `error`: the socket failed mid-transfer — a cut, not a measurement;
+   *   - `timeout`: the deadline passed (slow, or stalled — `idleMs` says which);
+   *   - `abort`: the scan was stopped.
+   */
+  endedBy: 'target' | 'close' | 'error' | 'timeout' | 'abort';
+  /** The socket's own message, for the `error` case. */
+  error?: string;
+  /**
    * How long the stream had been silent when reading stopped. This is the difference between
    * "this line is slow" and "this transfer stopped moving": a narrow pipe keeps trickling, a
    * PMTU/MTU hole goes quiet after the first window and never comes back.
@@ -213,7 +227,7 @@ const HEAD_BYTES = 1024;
 
 /**
  * Counts bytes until `target` is reached, the socket ends, or the deadline passes. The result
- * says which of those happened (`ended`), and how quiet the stream had gone (`idleMs`).
+ * says which of those happened (`endedBy`), and how quiet the stream had gone (`idleMs`).
  */
 export function drainBytes(
   socket: net.Socket,
@@ -231,15 +245,15 @@ export function drainBytes(
     const cleanup = () => {
       clearTimeout(timer);
       socket.off('data', onData);
-      socket.off('error', onDone);
-      socket.off('close', onDone);
+      socket.off('error', onError);
+      socket.off('close', onClose);
       if (signal) signal.removeEventListener('abort', onAbort);
     };
     let lastDataMs = 0;
     // `ended` used to be hardcoded true, which made the deadline indistinguishable from a
     // finished transfer; it now means "the stream finished on its own" (the target arrived, or
     // the peer closed) rather than "we stopped reading".
-    const onDone = (ended: boolean) => {
+    const onDone = (endedBy: DrainResult['endedBy'], error?: string) => {
       if (settled) return;
       settled = true;
       cleanup();
@@ -248,7 +262,9 @@ export function drainBytes(
         bytes,
         ms,
         firstByteMs,
-        ended,
+        ended: endedBy === 'target' || endedBy === 'close',
+        endedBy,
+        ...(error ? { error } : {}),
         idleMs: lastDataMs ? Math.max(0, ms - lastDataMs) : ms,
         head: Buffer.concat(head),
       });
@@ -262,14 +278,17 @@ export function drainBytes(
         head.push(slice);
         headBytes += slice.length;
       }
-      if (bytes >= target) onDone(true);
+      if (bytes >= target) onDone('target');
     };
-    const onAbort = () => onDone(false);
-    const timer = setTimeout(() => onDone(false), timeoutMs);
+    const onError = (err: Error) => onDone('error', err.message);
+    const onClose = () => onDone('close');
+    const onAbort = () => onDone('abort');
+    const timer = setTimeout(() => onDone('timeout'), timeoutMs);
     socket.on('data', onData);
-    socket.on('error', () => onDone(false));
-    socket.on('close', () => onDone(true));
+    socket.on('error', onError);
+    socket.on('close', onClose);
     if (signal) signal.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
 }
 

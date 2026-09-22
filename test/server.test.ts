@@ -247,6 +247,29 @@ test('sessions can be saved, listed, exported and deleted', async () => {
   assert.ok(!deleted.sessions.some((s: { id: string }) => s.id === 'imported-1'));
 });
 
+test('the session endpoints take an id, never a path', async () => {
+  // `loadSnapshot` also accepts a path on purpose (`ezscan resume ./file.json`), so an id straight
+  // from a request body reached the filesystem as one: with the per-run token, `sessions/export`
+  // read any file the server could open and `sessions/delete` unlinked any `.json` next to the data
+  // folder — and an imported snapshot's own `id` chose its filename. Through the API an id is an id.
+  for (const path of ['/api/sessions/load', '/api/sessions/export', '/api/sessions/delete']) {
+    const res = await post(path, { id: '../../../etc/passwd' });
+    assert.equal(res.status, 400, `${path} must refuse a path`);
+  }
+  const missing = await post('/api/sessions/load', {});
+  assert.equal(missing.status, 400);
+
+  const saved = await postJson('/api/scan/save', {});
+  const id = saved.sessions[0].id;
+  assert.equal((await post('/api/sessions/load', { id })).status, 200, 'a real id still loads');
+
+  const snapshot = JSON.parse(await (await post('/api/sessions/export', { id })).text()) as { targets: string[] };
+  const imported = await postJson('/api/sessions/import', { raw: JSON.stringify({ ...snapshot, id: '../../escape' }) });
+  assert.match(imported.id, /^[0-9a-f-]{36}$/, 'an imported snapshot cannot name a file outside the folder');
+  const resume = await post('/api/scan/start', { mode: 'resume', resumeId: '../../escape' });
+  assert.equal(resume.status, 400);
+});
+
 test('retest and summary endpoints work on the collected results', async () => {
   const retest = await postJson('/api/retest', { keys: [`127.0.0.1:${edge.port}`], mode: 'probe' });
   assert.equal(retest.updated, 1);

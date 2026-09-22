@@ -190,6 +190,42 @@ test('--retry-gap and --no-recovery reach the scan that runs, not just the parse
   }
 });
 
+test('a resumed run keeps the session settings and adds only what the flags name', async () => {
+  // `resume` built a *whole* config from the defaults and handed it to the scanner as an override,
+  // so every field the flags did not mention was reset: the documented
+  // `ezscan resume a1b2c3d4 --speed --top 30` (docs/USAGE.md) resumed with **no SNI**, 50 workers
+  // and no rate limit — on a session whose settings were half the reason to resume it.
+  const dataDir = await mkdtemp(join(tmpdir(), 'ez-scanner-cli-'));
+  const base = [
+    'scan', '--source', 'paste', '--targets', '127.0.0.1', '--port', '1', '--count', '1',
+    '--tries', '2', '--min', '1', '--workers', '3', '--rate', '7', '--sni', 'keep.example', '--no-color',
+  ];
+  try {
+    await ezscan(base, { EZSCAN_DATA_DIR: dataDir, NO_COLOR: '1' });
+    const started = await savedConfig(dataDir);
+    assert.equal(started.sni, 'keep.example');
+    assert.equal(started.workers, 3);
+    assert.equal(started.rateLimitPerSec, 7);
+
+    const id = (await readdir(join(dataDir, 'sessions')))
+      .find((f) => f.endsWith('.json') && !f.endsWith('.meta.json'))!
+      .replace('.json', '');
+    await ezscan(['resume', id, '--retry-gap', '200', '--top', '30', '--no-color'], {
+      EZSCAN_DATA_DIR: dataDir,
+      NO_COLOR: '1',
+    });
+
+    const resumed = await savedConfig(dataDir);
+    assert.equal(resumed.sni, 'keep.example', 'the resumed run must probe with the session SNI');
+    assert.equal(resumed.workers, 3, 'and with the workers the session was started with');
+    assert.equal(resumed.rateLimitPerSec, 7, 'and with its rate limit');
+    assert.equal(resumed.betweenTriesMs, 200, 'while a flag that was given still applies');
+    assert.equal(resumed.topN, 30, 'including one only the resumed run names');
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('a per-operator preset is accepted by name and by alias', async () => {
   // The profile these apply is measured in test/operator-profiles.test.ts; here it only has
   // to reach the CLI without an error and produce a runnable plan.

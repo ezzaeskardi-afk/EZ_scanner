@@ -160,6 +160,29 @@ test('an error page is not a download: the status decides', async () => {
   }
 });
 
+test('a transfer the path cuts is not a throughput number', async () => {
+  // `drainBytes` reported "reading stopped before the deadline", which is a *cut* stream and a
+  // *slow* one at once, so a socket error mid-transfer was counted like a finished download: the
+  // endpoint promised 400 KB, the path reset after 64 KB, and those 64 KB became an Mbps number
+  // that then ranked addresses in the speed phase. Only the quiet half of that shape (a stall) was
+  // caught before, and the loud half is what a DPI/NAT box does when it reacts to volume.
+  const server = await startFakeEdge({ downloadBytes: 400_000, cutDownloadAfterBytes: 64_000 });
+  try {
+    const result = await measureDownload(
+      { ip: '127.0.0.1', port: server.port, sni: 'speed.example' },
+      { ...base, speedBytes: 300_000, speedTimeoutMs: 8000 },
+      controller.signal,
+    );
+    assert.equal(result.ok, false, `a cut transfer must not be a measurement (mbps=${result.mbps})`);
+    assert.equal(result.mbps, 0, 'no throughput may be derived from a transfer that never arrived');
+    assert.equal(result.cut, true, 'and the reason has to be nameable, not just "failed"');
+    assert.ok(result.bytes > 0 && result.bytes < 300_000, `the partial bytes stay for the message (${result.bytes})`);
+    assert.match(result.error ?? '', /cut after \d+ bytes/);
+  } finally {
+    await server.close();
+  }
+});
+
 test('an upload the endpoint rejects is not throughput either', async () => {
   const server = await startFakeEdge({ uploadStatus: 503 });
   try {

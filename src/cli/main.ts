@@ -20,7 +20,7 @@ import { runDoctor, runSelfTest } from '../server/doctor.ts';
 import { openBrowser } from './openbrowser.ts';
 import { Output, RESULT_HEADERS, nextStepHints, printDoctor, resultRow } from './render.ts';
 
-const VERSION = '1.7.0';
+const VERSION = '1.7.1';
 
 /* ───────────────────────────── arg parsing ───────────────────────────── */
 
@@ -112,7 +112,17 @@ function num(args: Args, key: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function buildConfig(args: Args): { config: ScanConfig; warnings: string[] } {
+/**
+ * The config keys a set of flags actually names, as a patch.
+ *
+ * A patch rather than a ready config, because the caller decides what it lands on: a scan applies
+ * it to the defaults, while `resume` has to apply it to the config the session was saved with.
+ * Building a complete config here (which is what the CLI did) meant every field the flags did
+ * *not* mention was silently reset to its default — so the documented
+ * `ezscan resume <id> --speed --top 30` resumed with no SNI, the default 50 workers and no rate
+ * limit, on a session whose whole point was the settings it was started with.
+ */
+function buildConfigPatch(args: Args): Partial<ScanConfig> {
   let patch: Partial<ScanConfig> = {};
   const presetName = args.values.get('preset');
   if (presetName) {
@@ -163,8 +173,12 @@ function buildConfig(args: Args): { config: ScanConfig; warnings: string[] } {
   set('canaryPort', Number(canaryPort) || DEFAULT_CONFIG.canaryPort, args.values.has('canary') && Boolean(canaryPort));
   set('family', num(args, 'family', DEFAULT_CONFIG.family), args.values.has('family'));
 
-  const { config, warnings } = sanitizeConfig(patch, DEFAULT_CONFIG);
-  return { config, warnings };
+  return patch;
+}
+
+/** A full config for a scan: the flags (or the preset they name) on top of the defaults. */
+function buildConfig(args: Args): { config: ScanConfig; warnings: string[] } {
+  return sanitizeConfig(buildConfigPatch(args), DEFAULT_CONFIG);
 }
 
 async function buildSource(args: Args): Promise<SourceSpec> {
@@ -337,7 +351,13 @@ async function cmdResume(args: Args): Promise<number> {
   }
   const scanner = new Scanner(defaultDataDir());
   const snapshot = await scanner.loadSnapshot(id);
-  const overrides = args.values.size || args.flags.size ? buildConfig(args) : null;
+  // What the flags name, on top of what the session was saved with. A resume is the same scan
+  // continued, so `--speed` adds the speed phase instead of replacing the SNI, the worker count and
+  // the rate limit the run was started with (that replacement is what a full config built from the
+  // defaults did — see `buildConfigPatch`). Flags that only affect this process are not config at
+  // all, so `--quiet`/`--no-color`/`--print 50` no longer count as "the user changed something".
+  const patch = buildConfigPatch(args);
+  const overrides = Object.keys(patch).length ? sanitizeConfig(patch, snapshot.config) : null;
   for (const w of overrides?.warnings ?? []) out.line(out.paint('yellow', `⚠ ${w}`));
   scanner.on('log', (line) => out.log(line));
   scanner.on('progress', (stats) => out.stats(stats));

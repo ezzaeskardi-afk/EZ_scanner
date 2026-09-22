@@ -216,6 +216,10 @@ You can also change settings while resuming:
 ezscan resume a1b2c3d4 --speed --top 30
 ```
 
+The flags are the same ones `ezscan scan` takes and they apply **on top of the settings the session
+was saved with**: the scan continues with its own SNI, port, worker count and rate limit, and only
+what you name changes. A `--preset gentle` moves the session onto another profile.
+
 ---
 
 ## 8. Troubleshooting: "no green IPs"

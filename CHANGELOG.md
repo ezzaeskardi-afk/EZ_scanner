@@ -1,5 +1,57 @@
 # Changelog
 
+## 1.7.1 — 2026-09-22
+
+A review pass over the whole tree, and every entry below came out of running the code rather than
+reading it. The two that matter most are both about a number or a setting that *looked* applied:
+the resume flow shipped in 1.7.0 reset the session it was resuming (the documented
+`ezscan resume <id> --speed --top 30` probed with **no SNI**), and the speed phase counted a
+transfer the line had cut in half as the throughput of whatever bytes had made it. The other two
+are a sampler that only ever reached one corner of a /32, and session ids that were paths.
+
+### Fixed
+- **A resumed run keeps the session's own settings.** `resume` built a *whole* config from the
+  defaults and handed it to the scanner as an override, so every field the flags did not name was
+  reset to its default on the way in: resuming with `--speed --top 30` — the command `docs/USAGE.md`
+  documents — ran with `sni=` (nothing to serve), 50 workers instead of the session's 12, and no
+  rate limit, on a session whose settings were half the reason to resume it. The flags are now a
+  *patch* applied on top of the config the session was saved with (the same way the GUI's preset
+  buttons have always worked), so a resume is the same scan continued. Flags that are not config at
+  all (`--quiet`, `--no-color`, `--print 50`) also stop counting as "the user changed the settings"
+  — under a full-config override, any of them triggered the reset.
+- **A transfer the line cuts is no longer reported as throughput.** `drainBytes` described a
+  transferred byte count and one boolean for "we stopped before the deadline", which is a
+  *finished* stream and a *cut* one at once: a socket error mid-download was read exactly like a
+  complete one, so the endpoint promising 400 KB, the line resetting after 64 KB, and the 64 KB
+  that made it became **4.29 Mbps** — a number for a transfer that never arrived, in the phase the
+  whole scan exists for (`--speed`, `--top`). The quiet half of that shape (a stall) was caught in
+  1.6.x; this is the loud half, which is what a DPI/NAT box does when it reacts to volume. The
+  read now ends as `target` / `close` / `error` / `timeout` / `abort`, a cut fails with the bytes it
+  reached and the socket's own message, and `ezscan doctor` names it instead of blaming the speed
+  URL.
+- **A huge pool is sampled over the whole pool, not from one corner of it.** The sampler reduced a
+  fixed 53-bit draw with `% size`, which is uniform only while the pool fits in 53 bits. A
+  Cloudflare v6 range is a /32, so `(53-bit draw) % 2^96` is the draw itself: every "random"
+  address in it came from the first 2^53 of the space — measured, the highest offset ever drawn from
+  `2606:4700::/32` was **2^50 of 2^96**. The comment above the Cloudflare pools promises a uniform
+  sweep over the announced space, which was true for the v4 ranges only. Rejection sampling draws at
+  the pool's own width now, and the list stays exactly as reproducible from its seed.
+- **The session endpoints take an id, never a path.** `loadSnapshot` accepts a path on purpose —
+  `ezscan resume ./file.json` is a documented feature — and the HTTP API passed a request body's
+  `id` straight into it, so anyone holding the per-run token could make `sessions/export` read any
+  file the server can open and `sessions/delete` unlink any `.json` beside the data folder. An
+  imported snapshot's own `id` chose its filename the same way, which is a write, not a read. The
+  endpoints now require an id (a UUID, or a name an import may carry), and fall back to a fresh id
+  when an imported file names something that is not one.
+
+### Tests
+- 197 tests (+5). Each fix was verified to bite: restoring the full-config override fails the resume
+  test with `expected 'keep.example', actual ''`; the old 53-bit draw fails the sampling test with
+  `highest offset drawn: 2^50`; reporting a socket error as a close fails `drainBytes`'s contract
+  test; counting the cut transfer as a measurement fails with `mbps=4.29`; and removing the id guard
+  fails `/api/sessions/load must refuse a path`. `drainBytes`'s three endings are pinned at the TCP
+  level (target reached, peer closed early, path reset) so the verdict never has to guess.
+
 ## 1.7.0 — 2026-09-22
 
 The doctor could already read a line and name the preset it needs, and the scan then ignored the

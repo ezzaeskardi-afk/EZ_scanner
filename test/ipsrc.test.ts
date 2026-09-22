@@ -95,6 +95,32 @@ test('buildTargets: tiny CIDRs are enumerated, huge ones sampled', async () => {
   assert.equal(big.targets.length, 25);
 });
 
+test('buildTargets: a huge pool is sampled over its whole range, not from one corner', async () => {
+  // The Cloudflare v6 blocks are /32s, and the sampler reduced a fixed 53-bit draw with `% size`:
+  // for a 2^96 pool that is the draw itself, so every "random" address came from the first 2^53 of
+  // the space. The sweep was uniform over the corner the draw could reach — and the note above the
+  // Cloudflare pools promises a uniform sweep over the whole announced space, which only held for
+  // the v4 ranges. Rejection sampling draws the offset at the pool's own width instead.
+  const info = cidrInfo('2606:4700::/32');
+  const drawn = await buildTargets({ kind: 'paste', text: '2606:4700::/32' }, { count: 400, family: 6, seed: 8 });
+  assert.equal(drawn.targets.length, 400);
+  const offsets = drawn.targets.map((target) => ipv6ToBig(target) - info.base);
+  for (const offset of offsets) {
+    assert.ok(offset >= 0n && offset < info.size, `${offset} is inside the pool`);
+  }
+  assert.equal(new Set(drawn.targets).size, 400, 'no duplicate addresses');
+  const middle = info.size / 2n;
+  const reached = offsets.reduce((max, offset) => (offset > max ? offset : max), 0n);
+  assert.ok(
+    offsets.some((offset) => offset >= middle),
+    `the sampler has to reach past the middle of a /32 (highest offset drawn: 2^${reached.toString(2).length - 1})`,
+  );
+
+  // …and the draw is still the seeded one: the same seed gives the same list.
+  const again = await buildTargets({ kind: 'paste', text: '2606:4700::/32' }, { count: 400, family: 6, seed: 8 });
+  assert.deepEqual(again.targets, drawn.targets);
+});
+
 test('buildTargets: ranges, ports, family filter and domains', async () => {
   const mixed = await buildTargets(
     { kind: 'paste', text: '104.17.0.0-104.17.0.4\n104.18.0.0/30\n[2606:4700::1]:2053\nfoo.example' },

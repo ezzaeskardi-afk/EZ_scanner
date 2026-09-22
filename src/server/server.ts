@@ -20,7 +20,7 @@ import { applyPreset, type IpResult, type LogLine, type ScanConfig, type SourceS
 import { sanitizeConfig, sanitizeSource } from '../core/validate.ts';
 import { runDoctor } from './doctor.ts';
 
-const VERSION = '1.7.0';
+const VERSION = '1.7.1';
 const MAX_BODY = 32 * 1024 * 1024;
 
 interface EzServerOptions {
@@ -43,6 +43,24 @@ export interface EzServer {
 interface SseClient {
   res: http.ServerResponse;
   id: string;
+}
+
+/**
+ * A session id, as the API accepts it: what `Scanner` writes (`randomUUID()`) or a name a
+ * snapshot was imported under.
+ *
+ * Checked before the id reaches the filesystem, because `loadSnapshot` also takes a *path*
+ * (`ezscan resume ./file.json`, on purpose) and the sessions folder is only one candidate it
+ * tries. Through the API that would be a file read (sessions export) or delete outside the data
+ * folder for anyone holding the per-run token, so the endpoints that take an id take an id — no
+ * separators, no `..`. The CLI keeps the path form, where the caller is the user who typed it.
+ */
+const SESSION_ID_RE = /^[\w.-]{1,64}$/;
+
+function sessionId(value: unknown): string | null {
+  const id = String(value ?? '').trim();
+  if (!SESSION_ID_RE.test(id) || id === '.' || id === '..') return null;
+  return id;
 }
 
 export async function createEzServer(opts: EzServerOptions = {}): Promise<EzServer> {
@@ -381,11 +399,12 @@ export async function createEzServer(opts: EzServerOptions = {}): Promise<EzServ
 
         let resumeFrom: Awaited<ReturnType<Scanner['loadSnapshot']>> | undefined;
         if (body.mode === 'resume') {
-          if (!body.resumeId) {
-            json(res, 400, { ok: false, error: 'resumeId is required to resume a session' });
+          const id = sessionId(body.resumeId);
+          if (!id) {
+            json(res, 400, { ok: false, error: 'a valid resumeId is required to resume a session' });
             return;
           }
-          resumeFrom = await scanner.loadSnapshot(body.resumeId);
+          resumeFrom = await scanner.loadSnapshot(id);
         }
         const targets = body.mode === 'targets' ? (body.targets ?? []).map((t) => String(t)).filter(Boolean) : undefined;
         if (body.mode === 'targets' && !targets?.length) {
@@ -476,11 +495,12 @@ export async function createEzServer(opts: EzServerOptions = {}): Promise<EzServ
       }
       if (pathname === '/api/sessions/load' && req.method === 'POST') {
         const body = await readJson<{ id?: string }>(req);
-        if (!body.id) {
-          json(res, 400, { ok: false, error: 'id is required' });
+        const id = sessionId(body.id);
+        if (!id) {
+          json(res, 400, { ok: false, error: 'a session id is required' });
           return;
         }
-        const snapshot = await scanner.loadSnapshot(body.id);
+        const snapshot = await scanner.loadSnapshot(id);
         json(res, 200, {
           ok: true,
           session: { id: snapshot.id, label: snapshot.label, total: snapshot.targets.length, cursor: snapshot.cursor, healthy: snapshot.results.length },
@@ -489,7 +509,12 @@ export async function createEzServer(opts: EzServerOptions = {}): Promise<EzServ
       }
       if (pathname === '/api/sessions/delete' && req.method === 'POST') {
         const body = await readJson<{ id?: string }>(req);
-        if (body.id) await scanner.deleteSession(body.id);
+        const id = sessionId(body.id);
+        if (!id) {
+          json(res, 400, { ok: false, error: 'a session id is required' });
+          return;
+        }
+        await scanner.deleteSession(id);
         json(res, 200, { ok: true, sessions: await scanner.listSessions() });
         return;
       }
@@ -512,7 +537,10 @@ export async function createEzServer(opts: EzServerOptions = {}): Promise<EzServ
         }
         const dir = join(scanner.dataDir, 'sessions');
         await mkdir(dir, { recursive: true });
-        const id = parsed.id || randomUUID();
+        // The imported file's own `id` decides the filename, so it is checked the same way a
+        // request's id is: a snapshot is user data, and a crafted one must not write (or later
+        // delete) outside the sessions folder.
+        const id = sessionId(parsed.id) ?? randomUUID();
         await writeFile(join(dir, `${id}.json`), JSON.stringify({ ...parsed, id }), 'utf8');
         await writeFile(
           join(dir, `${id}.meta.json`),
@@ -538,11 +566,12 @@ export async function createEzServer(opts: EzServerOptions = {}): Promise<EzServ
       }
       if (pathname === '/api/sessions/export' && req.method === 'POST') {
         const body = await readJson<{ id?: string }>(req);
-        if (!body.id) {
-          json(res, 400, { ok: false, error: 'id is required' });
+        const id = sessionId(body.id);
+        if (!id) {
+          json(res, 400, { ok: false, error: 'a session id is required' });
           return;
         }
-        const snapshot = await scanner.loadSnapshot(body.id);
+        const snapshot = await scanner.loadSnapshot(id);
         const filename = `ez-scanner-session-${snapshot.id.slice(0, 8)}.json`;
         const raw = JSON.stringify(snapshot, null, 2);
         res.writeHead(200, {

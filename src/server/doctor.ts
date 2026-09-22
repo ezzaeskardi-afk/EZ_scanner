@@ -69,7 +69,7 @@ export interface LineSignature {
    */
   idle: { attempts: number; ok: number; reset: number; timedOut: number; other: number };
   /** How a large transfer behaved, when the throughput row managed to run one. */
-  transfer?: { bytes: number; targetBytes: number; stale: boolean; idleMs: number; error?: string };
+  transfer?: { bytes: number; targetBytes: number; stale: boolean; cut?: boolean; idleMs: number; error?: string };
 }
 
 /** The preset to run, and the evidence that named it. Reachable through `DoctorReport`. */
@@ -656,6 +656,7 @@ export async function runDoctor(dataDir: string, sampleSni = 'www.cloudflare.com
       bytes: down.bytes,
       targetBytes: speedBytes,
       stale: down.stale === true,
+      cut: down.cut === true,
       idleMs: down.idleMs ?? 0,
       ...(down.error ? { error: down.error } : {}),
     };
@@ -669,7 +670,9 @@ export async function runDoctor(dataDir: string, sampleSni = 'www.cloudflare.com
         ? undefined
         : down.stale
           ? 'the transfer stopped moving rather than being slow: this is the MTU/PMTU signature of a PPPoE line, so scan with the mobin preset (or --no-speed)'
-          : 'the speed endpoint did not deliver a transfer — set --speed-url to a URL your line can reach, or turn the speed phase off',
+          : down.cut
+            ? 'the path cut the transfer part-way through: that is a DPI/NAT box or an MTU hole reacting to volume, so scan with fewer bytes (--speed-bytes) or leave the speed phase out (--no-speed)'
+            : 'the speed endpoint did not deliver a transfer — set --speed-url to a URL your line can reach, or turn the speed phase off',
     });
   } catch (err) {
     checks.push({ name: 'throughput endpoint', ok: false, detail: (err as Error).message });
