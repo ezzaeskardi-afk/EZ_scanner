@@ -270,6 +270,38 @@ test('the session endpoints take an id, never a path', async () => {
   assert.equal(resume.status, 400);
 });
 
+test('a session id cannot name a windows device', async () => {
+  // `\w` matches `CON`, and Windows resolves `CON.json` to the console device whatever the
+  // extension hangs off it — so the id guard has to reject the reserved names itself, not only the
+  // separators. It is the same guard the import path uses to choose a filename.
+  for (const id of ['CON', 'nul', 'LPT1', 'con.json', 'COM9']) {
+    assert.equal((await post('/api/sessions/delete', { id })).status, 400, `${id} must be refused`);
+  }
+});
+
+test('a resume runs with the settings on screen, not the ones the session was saved with', async () => {
+  // `restore()` replaces the scanner's config with the snapshot's, so the config this endpoint had
+  // just validated, answered `ok` for and broadcast back into the form was silently dropped: the
+  // user edited a setting, pressed Resume, and the run used the session's old value. The CLI closed
+  // this shape in 1.7.1 by treating its flags as a patch over the session's config; here the posted
+  // config *is* the form the user is looking at, so it is what the resumed run has to use.
+  const saved = await postJson('/api/scan/save', {});
+  const id = saved.sessions[0].id;
+  const started = await postJson('/api/scan/start', {
+    mode: 'resume',
+    resumeId: id,
+    config: { sni: 'typed-in-the-form.example', workers: 3 },
+  });
+  assert.equal(started.ok, true, JSON.stringify(started));
+  for (let i = 0; i < 60; i++) {
+    if ((await getJson<{ state: string }>('/api/state')).state === 'done') break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const state = await getJson<{ config: { sni: string; workers: number } }>('/api/state');
+  assert.equal(state.config.sni, 'typed-in-the-form.example', 'the resumed run uses the settings on screen');
+  assert.equal(state.config.workers, 3);
+});
+
 test('retest and summary endpoints work on the collected results', async () => {
   const retest = await postJson('/api/retest', { keys: [`127.0.0.1:${edge.port}`], mode: 'probe' });
   assert.equal(retest.updated, 1);
@@ -298,6 +330,10 @@ test('a second scan cannot start while one is running', async () => {
   assert.equal(first.ok, true);
   const second = await post('/api/scan/start', { mode: 'targets', targets: ['127.0.0.1:1'] });
   assert.equal(second.status, 409);
+  // A retest rewrites rows and re-scores the batch, so it is a writer like a scan start: it used to
+  // run in the middle of a live scan and re-probe a row the speed phase was writing to.
+  const retestWhileRunning = await post('/api/retest', { keys: [`127.0.0.1:${edge.port}`], mode: 'probe' });
+  assert.equal(retestWhileRunning.status, 409);
   await post('/api/scan/pause', {});
   const paused = await getJson('/api/state');
   assert.equal(paused.state, 'paused');

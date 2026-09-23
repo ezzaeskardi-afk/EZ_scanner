@@ -20,7 +20,7 @@ import { applyPreset, type IpResult, type LogLine, type ScanConfig, type SourceS
 import { sanitizeConfig, sanitizeSource } from '../core/validate.ts';
 import { runDoctor } from './doctor.ts';
 
-const VERSION = '1.7.2';
+const VERSION = '1.7.3';
 const MAX_BODY = 32 * 1024 * 1024;
 
 interface EzServerOptions {
@@ -57,9 +57,26 @@ interface SseClient {
  */
 const SESSION_ID_RE = /^[\w.-]{1,64}$/;
 
+/**
+ * Windows device names, which are not file names even when they carry an extension: `CON.json` is
+ * still the console, `NUL.json` still discards. `\w` happily matches them, so the id guard below
+ * has to reject them by name.
+ */
+const RESERVED_NAMES = new Set([
+  'con',
+  'prn',
+  'aux',
+  'nul',
+  'clock$',
+  ...Array.from({ length: 9 }, (_, i) => `com${i + 1}`),
+  ...Array.from({ length: 9 }, (_, i) => `lpt${i + 1}`),
+]);
+
 function sessionId(value: unknown): string | null {
   const id = String(value ?? '').trim();
   if (!SESSION_ID_RE.test(id) || id === '.' || id === '..') return null;
+  // The stem, because Windows ignores everything after the dot for a device name.
+  if (RESERVED_NAMES.has(id.split('.')[0]!.toLowerCase())) return null;
   return id;
 }
 
@@ -411,8 +428,14 @@ export async function createEzServer(opts: EzServerOptions = {}): Promise<EzServ
           json(res, 400, { ok: false, error: 'no addresses given' });
           return;
         }
+        // On this endpoint the posted config is the *whole* form the user is looking at, and the
+        // form is the source of truth: it is applied on top of the session's own config, so a
+        // resume continues the session's addresses and results under the settings on screen.
+        // Without it `restore()` replaced the config with the snapshot's and every setting the
+        // user could read — and had just edited — was silently discarded, even though the same
+        // request had already been validated, answered `ok` and broadcast back to the GUI.
         void scanner
-          .start({ resumeFrom, targets, label: body.label })
+          .start({ resumeFrom, ...(resumeFrom ? { configOverride: config } : {}), targets, label: body.label })
           .catch((err) => broadcast('logs', [{ at: Date.now(), level: 'error', text: `scan failed: ${(err as Error).message}` }]));
         json(res, 200, { ok: true, state: scanner.getState(), warnings, targets: targets?.length });
         return;
@@ -440,6 +463,13 @@ export async function createEzServer(opts: EzServerOptions = {}): Promise<EzServ
       }
 
       if (pathname === '/api/retest' && req.method === 'POST') {
+        // A retest rewrites rows and re-scores the batch, so it belongs to the same single-writer
+        // rule a scan start obeys: overlapping it with a running scan let the speed phase write a
+        // verdict into a row while the retest was re-probing it.
+        if (scanner.getState() === 'running' || scanner.getState() === 'paused' || scanner.getState() === 'offline') {
+          json(res, 409, { ok: false, error: 'a scan is already running' });
+          return;
+        }
         const body = await readJson<{ keys?: string[]; mode?: 'probe' | 'speed' }>(req);
         const updated = await scanner.retest(body.keys ?? [], body.mode ?? 'speed');
         json(res, 200, { ok: true, updated: updated.length });

@@ -288,6 +288,54 @@ test("a stopped measurement is not the path's verdict", async () => {
   }
 });
 
+test('a speed URL that is not a URL is not a measurement of this path', async () => {
+  // The URL used to be resolved with a `catch` that fell back to Cloudflare's own endpoint, so
+  // `--speed-url "https://"` (or any value the sanitizer's `/^https?:\/\//` test let through but the
+  // URL parser refused) quietly measured a host the user never named — with that host as the SNI,
+  // since the SNI is derived from the URL. The row has to say what happened instead, and it must not
+  // be a `cut`: nothing about this address was measured, and a cut is a verdict *about the path*.
+  const asked = edge.requests.length;
+  const down = await measureDownload(
+    { ip: '127.0.0.1', port: edge.port, sni: 'speed.example' },
+    { ...base, speedUrl: 'https://', speedBytes: 100_000, speedTimeoutMs: 1000 },
+    controller.signal,
+  );
+  assert.equal(down.ok, false);
+  assert.equal(down.trust, 'rejected', `saw ${down.trust}: ${down.error}`);
+  assert.match(down.error ?? '', /not a URL/);
+  assert.equal(edge.requests.length, asked, 'no request was sent to the endpoint at all');
+});
+
+test('an upload URL that is not a URL is not the path cutting a transfer', async () => {
+  const up = await measureUpload(
+    { ip: '127.0.0.1', port: edge.port, sni: 'speed.example' },
+    { ...base, uploadUrl: 'https://', speedTimeoutMs: 1000 },
+    controller.signal,
+  );
+  assert.equal(up.trust, 'rejected', `a config typo must not be filed as a path verdict (${up.error})`);
+  assert.match(up.error ?? '', /upload URL is not a URL/);
+});
+
+test('an endpoint that will not speak TLS is not a mid-transfer cut', async () => {
+  // The transport is wrong, not the path: a port that answers but cannot complete a handshake (the
+  // wrong SNI, or a listener that is not TLS) fails the same way for every address on the line, so
+  // it takes the same verdict an error page takes — `rejected`, which neither ranks nor penalises.
+  // Reading it as `cut` sent the user to `--speed-bytes` after a DPI box that was never there.
+  const plain = await startFakeTcp();
+  try {
+    const down = await measureDownload(
+      { ip: '127.0.0.1', port: plain.port, sni: 'speed.example' },
+      { ...base, speedBytes: 100_000, speedTimeoutMs: 2000, timeoutMs: 1500 },
+      controller.signal,
+    );
+    assert.equal(down.ok, false);
+    assert.equal(down.trust, 'rejected', `saw ${down.trust}: ${down.error}`);
+    assert.equal(down.mbps, 0);
+  } finally {
+    await plain.close();
+  }
+});
+
 test('aborting mid-probe resolves instead of hanging', async () => {
   const aborter = new AbortController();
   const promise = probeOnce({ ip: '10.255.255.1', port: 443, sni: '' }, { ...base, timeoutMs: 8000 }, aborter.signal);

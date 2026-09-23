@@ -274,13 +274,47 @@ function statusOf(head: Buffer): number | null {
   return match ? Number(match[1]) : null;
 }
 
+/**
+ * The speed URL for this transfer.
+ *
+ * It does not fall back to Cloudflare's own endpoint any more: that catch turned a typo in
+ * `--speed-url` into a silent scan against a host the user never named — the requests went out
+ * with `speed.cloudflare.com` as their SNI (that is the SNI `speedSni` derives from the *URL*), the
+ * transfers succeeded, and the rows were ranked by a measurement of an endpoint the run was not
+ * configured to use. `sanitizeConfig` refuses a value that is not a full http(s) URL, so a throw
+ * here is a value that reached the probe by some other road (an old saved session, a test), and it
+ * is reported as a request that could not be formed — not as a path verdict.
+ */
 function resolveSpeedUrl(template: string, bytes: number): URL {
-  const filled = template.replace('%BYTES%', String(bytes));
-  try {
-    return new URL(filled);
-  } catch {
-    return new URL(`https://speed.cloudflare.com/__down?bytes=${bytes}`);
-  }
+  return new URL(template.replace('%BYTES%', String(bytes)));
+}
+
+/**
+ * Whether a failure says "the endpoint would not take this request" rather than "the path broke" —
+ * which is the difference between the row being this address's verdict and it being the endpoint's.
+ *
+ * The doc for `SpeedTrust.rejected` already covers this shape: the request and the endpoint did not
+ * match, which happens to every address on the line the same way and says nothing about throughput.
+ * A TLS alert (`ssl/tls alert handshake failure`, `wrong version number` — an edge that does not
+ * serve this SNI, hosted behind a port that is not TLS at all) is exactly that, and it used to
+ * arrive as `cut`: the row was penalised as a DPI/NAT signature and `ezscan doctor` advised the
+ * user to lower `--speed-bytes` on a line that was merely pointed at the wrong host.
+ *
+ * Deliberately *not* here: a reset (`ECONNRESET`, `socket hang up`, `EPIPE`), a refusal of the SYN
+ * (`ECONNREFUSED`) or a silent deadline. Those are things the path did to a connection — and on an
+ * address that answered a probe on this very port a moment ago, a RST is the DPI signature the
+ * whole tool is looking for, so they keep their `cut`.
+ */
+function refusedByEndpoint(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException)?.code ?? '';
+  const message = (err as Error)?.message ?? '';
+  return (
+    code.startsWith('ERR_TLS') ||
+    code.startsWith('ERR_SSL') ||
+    /ssl|tls alert|handshake failure|handshake failed|alert handshake|wrong version number|unable to verify|self-signed|no peer certificate/i.test(
+      message,
+    )
+  );
 }
 
 /**
@@ -292,11 +326,13 @@ export async function measureDownload(
   cfg: ScanConfig,
   signal: AbortSignal,
 ): Promise<SpeedResult> {
-  const url = resolveSpeedUrl(cfg.speedUrl, cfg.speedBytes);
-  const sni = speedSni(target, url, cfg);
   let conn: ConnectedSocket | null = null;
   const started = Date.now();
   try {
+    // Resolved inside the try so a URL that cannot be formed is reported as one, instead of
+    // escaping as a rejected promise out of the speed phase.
+    const url = resolveSpeedUrl(cfg.speedUrl, cfg.speedBytes);
+    const sni = speedSni(target, url, cfg);
     conn = await tlsConnect(target.ip, target.port, {
       timeoutMs: cfg.timeoutMs,
       signal,
@@ -380,13 +416,15 @@ export async function measureDownload(
     // A dial that never completed says nothing about throughput — and an aborted one says nothing
     // about anything, so it is not this path's verdict to carry.
     const aborted = signal.aborted || err instanceof AbortedError;
-    return speedOutcome(aborted ? 'untested' : 'cut', {
+    const badUrl = /invalid url/i.test((err as Error)?.message ?? '');
+    const trust: SpeedTrust = aborted ? 'untested' : badUrl || refusedByEndpoint(err) ? 'rejected' : 'cut';
+    return speedOutcome(trust, {
       mbps: 0,
       bytes: 0,
       targetBytes: cfg.speedBytes,
       ms: Date.now() - started,
       ttfbMs: 0,
-      error: aborted ? 'aborted' : (err as Error).message,
+      error: aborted ? 'aborted' : badUrl ? `the speed URL is not a URL (${(err as Error).message})` : (err as Error).message,
     });
   } finally {
     destroy(conn?.socket);
@@ -438,13 +476,15 @@ export async function measureUpload(
     return speedOutcome('measured', { ...base, mbps: Math.round(mbps * 100) / 100 });
   } catch (err) {
     const aborted = signal.aborted || err instanceof AbortedError;
-    return speedOutcome(aborted ? 'untested' : 'cut', {
+    const badUrl = /invalid url/i.test((err as Error)?.message ?? '');
+    const trust: SpeedTrust = aborted ? 'untested' : badUrl || refusedByEndpoint(err) ? 'rejected' : 'cut';
+    return speedOutcome(trust, {
       mbps: 0,
       bytes,
       targetBytes: bytes,
       ms: Date.now() - started,
       ttfbMs: 0,
-      error: aborted ? 'aborted' : (err as Error).message,
+      error: aborted ? 'aborted' : badUrl ? `the upload URL is not a URL (${(err as Error).message})` : (err as Error).message,
     });
   } finally {
     destroy(conn?.socket);

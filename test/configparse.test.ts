@@ -81,6 +81,30 @@ test('shadowsocks link parses but warns that SNI tricks do not apply', () => {
   assert.ok(parsed.warnings.some((w) => /SNI/.test(w)));
 });
 
+test('a shadowsocks link in its base64 form still gets the discovered address', () => {
+  // The legacy form is one base64 blob over `method:password@host:port`, so the body holds no `@`
+  // for the rewrite to find. It used to fall through to "return the body unchanged", which meant
+  // `--links` with such a template wrote N copies of the *original* server — every "discovered"
+  // config pointed back at the address the user started from, with nothing said about it.
+  const encoded = `ss://${Buffer.from('aes-128-gcm:secret@1.2.3.4:8388', 'utf8').toString('base64')}`;
+  const out = rewriteLink(encoded, '5.6.7.8', undefined, { label: 'EZ-5.6.7.8-94ms' });
+  const back = parseShareLink(out);
+  assert.ok(isParsedConfig(back), out);
+  assert.equal(back.address, '5.6.7.8', 'the address inside the encoding was rewritten');
+  assert.equal(back.port, 8388, 'and the port came along');
+  assert.equal(back.name, 'EZ-5.6.7.8-94ms', 'the label names the discovery, like every other scheme');
+
+  // The port override the CLI/export passes has to land inside the encoding too.
+  const moved = rewriteLink(encoded, '2606:4700::1', 2053);
+  const parsed = parseShareLink(moved);
+  assert.ok(isParsedConfig(parsed), moved);
+  assert.equal(parsed.address, '2606:4700::1');
+  assert.equal(parsed.port, 2053);
+
+  // A body that is neither form is left exactly as it was, and `toLinks` refuses to build from it.
+  assert.equal(rewriteLink('ss://not-a-body', '5.6.7.8'), 'ss://not-a-body');
+});
+
 test('unsupported or broken input returns a readable error', () => {
   const bad = parseShareLink('wireguard://whatever');
   assert.ok(!isParsedConfig(bad));

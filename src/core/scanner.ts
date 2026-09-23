@@ -397,7 +397,15 @@ export class Scanner extends Emitter<ScannerEvents> {
           const attempt = await probeOnce({ ip: r.ip, port: r.port, sni: r.sni }, this.config, local.signal, r.sni);
           recordAttempt(fresh, attempt);
         }
-        Object.assign(r, finalize(fresh, this.config));
+        // A re-probe replaces everything the *probe* phase measured and nothing the speed phase
+        // did. Writing the fresh record over the row (which is what this did) also took its
+        // throughput with it — the fresh record has none, and `finalize` scored it with the speed
+        // term switched off, so pressing "Re-probe" emptied the Mbps column and *raised* the score
+        // of the row it had just re-measured. The verdict is part of the row's measurement, so it
+        // is carried across; `finalizeAll` below restores the batch normalisation the fresh
+        // record's score was computed without.
+        const speed = { downMbps: r.downMbps, downTrust: r.downTrust, upMbps: r.upMbps, upTrust: r.upTrust };
+        Object.assign(r, finalize(fresh, this.config), speed);
         this.emit('result', r);
       });
     } else {
@@ -415,6 +423,10 @@ export class Scanner extends Emitter<ScannerEvents> {
         this.emit('result', r);
       });
     }
+    // Every row's score is normalised against the batch, and a re-probe changes both the row and
+    // (through it) the batch's fastest trusted download — so the pass is run again here for both
+    // modes instead of leaving the neighbours scored against a baseline that no longer exists.
+    finalizeAll([...this.results.values()], this.config);
     this.emit('state', { state: this.state, stats: this.stats });
     return list;
   }

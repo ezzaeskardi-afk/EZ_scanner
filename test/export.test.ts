@@ -60,6 +60,31 @@ test('links export refuses to run without a template', () => {
   assert.throws(() => toLinks([sample('1.1.1.1', 100)], {}), /no config template/);
 });
 
+test('links export refuses a template that cannot carry an address', () => {
+  // The rewriter answers "the template unchanged" when it does not understand the input, and the
+  // export used to take that at face value: pasting an Xray/v2ray JSON document (not a link) into
+  // the template box wrote one copy of that JSON per address. A template that cannot hold an
+  // address is an error, not an export.
+  const json = JSON.stringify({ outbounds: [{ protocol: 'vless', settings: { vnext: [{ address: 'orig.example', port: 443 }] } }] });
+  assert.throws(() => toLinks([sample('1.1.1.1', 100)], { template: json }), /cannot carry an address/);
+  assert.throws(() => toLinks([sample('1.1.1.1', 100)], { template: 'ss://not-a-body' }), /cannot carry an address/);
+});
+
+test('a shadowsocks template exports the discovered address, not the old one', () => {
+  const template = `ss://${Buffer.from('aes-128-gcm:secret@1.2.3.4:8388', 'utf8').toString('base64')}`;
+  const links = toLinks([sample('104.16.0.1', 100), sample('104.16.0.2', 110)], { template, labelPrefix: 'EZ' });
+  const lines = links.trim().split('\n');
+  assert.equal(lines.length, 2);
+  assert.notEqual(lines[0], lines[1], 'each row is its own config, not two copies of the template');
+  // The address lives inside the encoding, so the check is on the decoded body — which is exactly
+  // what the exported link's client will read.
+  const decode = (line: string): string =>
+    Buffer.from(line.slice('ss://'.length).split('#')[0]!, 'base64').toString('utf8');
+  assert.match(decode(lines[0]!), /@104\.16\.0\.1:8388$/, decode(lines[0]!));
+  assert.match(decode(lines[1]!), /@104\.16\.0\.2:8388$/);
+  assert.ok(!links.includes('1.2.3.4'), 'the server the template came from is gone from the output');
+});
+
 test('exportResults picks filenames and content types', () => {
   const rows = [sample('104.16.0.1', 100)];
   const csv = exportResults(rows, 'csv');
@@ -137,6 +162,32 @@ test('sanitizeConfig clamps hostile values and warns about strict gates', () => 
   assert.equal(config.family, 4);
   assert.ok(warnings.some((w) => /unknown probe mode/.test(w)));
   assert.ok(warnings.some((w) => /workers/.test(w)));
+});
+
+test('a malformed speed or upload URL is refused with a warning, not silently swapped', () => {
+  // The old check was `/^https?:\/\//`, which accepts `https://` — a value the URL parser refuses. The
+  // throughput phase then asked for an endpoint that cannot exist (`resolveSpeedUrl` used to fall
+  // back to Cloudflare's own in silence, so the row was measured against a host the user never
+  // named), and the upload URL dropped the value without even a warning. Both are full-URL checks
+  // now, and both say so.
+  const base = { ...DEFAULT_CONFIG };
+  const badSpeed = sanitizeConfig({ speedUrl: 'https://' }, base);
+  assert.equal(badSpeed.config.speedUrl, base.speedUrl, 'the previous value is kept');
+  assert.ok(
+    badSpeed.warnings.some((w) => /speed URL must be a full http\(s\) URL/.test(w)),
+    badSpeed.warnings.join(' | '),
+  );
+
+  const badUpload = sanitizeConfig({ uploadUrl: 'not-a-url' }, base);
+  assert.equal(badUpload.config.uploadUrl, base.uploadUrl);
+  assert.ok(
+    badUpload.warnings.some((w) => /upload URL must be a full http\(s\) URL/.test(w)),
+    badUpload.warnings.join(' | '),
+  );
+
+  const good = sanitizeConfig({ speedUrl: 'https://my.endpoint/__down?bytes=%BYTES%' }, base);
+  assert.equal(good.config.speedUrl, 'https://my.endpoint/__down?bytes=%BYTES%', 'the placeholder survives');
+  assert.ok(!good.warnings.some((w) => /URL/.test(w)), good.warnings.join(' | '));
 });
 
 test('sanitizeConfig warns about the known "everything is red" combinations', () => {

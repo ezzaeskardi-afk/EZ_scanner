@@ -99,10 +99,26 @@ export function toHosts(results: IpResult[]): string {
 }
 
 /** One share link per discovered address, ready to import into the client. */
+/**
+ * An address no template can already contain, used to prove the template can hold one.
+ * TEST-NET-3 (RFC 5737) is reserved for documentation, so it is never a real result.
+ */
+const TEMPLATE_PROBE_IP = '203.0.113.9';
+
 export function toLinks(results: IpResult[], opts: ExportOptions): string {
   const template = opts.template?.trim();
   if (!template) {
     throw new Error('no config template: paste a vless://, trojan:// or vmess:// link first');
+  }
+  // The rewrite is the whole feature, and when it could not rewrite anything it returned the
+  // template untouched — so pasting an Xray/v2ray JSON document (which is not a link) into the
+  // template box wrote one copy of that JSON per address, and a link the rewriter did not
+  // understand wrote N copies of the *original* server. Proving it first turns both into the one
+  // thing the user needs: an error that says the template is not a link to inject into.
+  if (rewriteLink(template, TEMPLATE_PROBE_IP) === template) {
+    throw new Error(
+      'this template cannot carry an address: paste a single vless://, trojan://, vmess:// or ss:// link (a JSON config document is not a link)',
+    );
   }
   const lines = results.map((r) => {
     const label = `${opts.labelPrefix ?? 'EZ'}-${r.ip}${r.medianLatency ? `-${r.medianLatency}ms` : ''}${r.downMbps ? `-${r.downMbps}M` : ''}`;

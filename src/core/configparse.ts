@@ -152,11 +152,14 @@ function parseShadowsocks(raw: string): ParsedConfig | ParseFailure {
       /* keep as-is and let the regex below fail loudly */
     }
   }
-  const m = decoded.match(/^([^@]+)@\[?([^\]@:]+)\]?:(\d+)/);
+  // The host is read as a whole (`[...]` or up to the first `:`), because the old pattern let an
+  // *unbracketed* IPv6 authority through in pieces: `ss://…@2606:4700::1:2053` parsed as address
+  // `2606` and port `4700` — a silently wrong target, on the family half this tool's ranges use.
+  const m = decoded.match(/^([^@]+)@(\[[^\]]+\]|[^:]+):(\d+)/);
   if (!m) return { error: 'unrecognised shadowsocks link' };
   return {
     protocol: 'ss',
-    address: m[2],
+    address: m[2].replace(/^\[|\]$/g, ''),
     port: Number(m[3]),
     sni: m[2],
     hostHeader: '',
@@ -249,6 +252,19 @@ export function extractTargetsFromConfig(text: string): { hosts: string[]; error
 }
 
 /**
+ * Points a shadowsocks body (`method:password@host:port`, with the credentials base64 in one of
+ * the two forms) at `host`. Returns the body unchanged when it holds no authority to rewrite.
+ */
+function rewriteSsBody(body: string, host: string, port?: number): string {
+  const at = body.lastIndexOf('@');
+  if (at < 0) return body;
+  const match = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?/.exec(body.slice(at + 1));
+  if (!match) return body;
+  const nextPort = port ? `:${port}` : match[2] ? `:${match[2]}` : '';
+  return `${body.slice(0, at + 1)}${host}${nextPort}`;
+}
+
+/**
  * Injects a clean IP back into a share link.
  * vless/trojan keep their UUID/params, vmess is re-encoded, ss gets host replaced.
  */
@@ -275,11 +291,19 @@ export function rewriteLink(
   if (scheme === 'ss') {
     const body = trimmed.slice('ss://'.length);
     const [main, hash = ''] = body.split('#');
-    const replaced = main.replace(/(@?\[?[^@\]/:]+\]?):(\d+)/, `$1:${port ?? '$2'}`);
-    const withHost = replaced.includes('@')
-      ? replaced.replace(/@\[?[^\]/:]+\]?/, `@${hostPart}`)
-      : replaced;
-    return `ss://${withHost}${hash ? `#${hash}` : ''}`;
+    const suffix = opts.label ? `#${opts.label}` : hash ? `#${hash}` : '';
+    // The legacy form is a single base64 blob over `method:password@host:port`, so its body holds
+    // no `@` for the rewrite to find: the address is *inside* the encoding, the old code fell
+    // through to "return the body unchanged", and every exported link kept pointing at the server
+    // the user started from — N rows of the same untouched config. Decode, rewrite, re-encode.
+    if (!main.includes('@')) {
+      const decoded = Buffer.from(main, 'base64').toString('utf8');
+      if (!/@[^\s@]+:\d+\s*$/.test(decoded)) return trimmed;
+      const encoded = Buffer.from(rewriteSsBody(decoded, hostPart, port), 'utf8').toString('base64');
+      // Keep the padding style the link arrived with (both are legal in the wild).
+      return `ss://${main.endsWith('=') ? encoded : encoded.replace(/=+$/, '')}${suffix}`;
+    }
+    return `ss://${rewriteSsBody(main, hostPart, port)}${suffix}`;
   }
   // Share links use non-special schemes, and the URL API refuses to set an
   // IPv6 host on those, so the authority is rewritten textually.

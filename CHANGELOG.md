@@ -1,5 +1,79 @@
 # Changelog
 
+## 1.7.3 — 2026-09-23
+
+A review pass over the whole tree again, and every entry below came out of running the code rather
+than reading it. The two that matter most are about a promise the tool made and did not keep: the
+GUI said one thing and scanned another (a resume silently ran the session's old settings instead of
+the ones on screen), and `Re-probe` destroyed the throughput it was not asked to touch and raised
+the score of the row it had just measured. The rest are the same family — a value, a verdict or an
+export that *looked* right in all the places it was read from, and was not.
+
+### Fixed
+- **A resumed session runs the settings on screen.** `POST /api/scan/start` accepted the form's
+  config on a resume, validated it, answered `ok`, warned about it and broadcast it back into the
+  GUI — and then `Scanner.start()` let `restore()` replace the config with the snapshot's, so every
+  value the user could read, and had just edited, was silently discarded before the first probe.
+  Measured on the endpoint: posted `sni=typed-in-the-form.example, workers=3`, ran with
+  `sni=from-the-session.example, workers=12`. The posted config is now applied on top of the
+  session's own, so a resume keeps the session's addresses, cursor and results under the settings
+  that are visible. (1.7.1 closed the same shape on the CLI, where the flags are a *patch* over the
+  session's config; here the posted config is the whole form, so it is the form that wins.)
+- **`Re-probe` no longer wipes the throughput — or raises the score for it.** `retest(keys, 'probe')`
+  built a fresh record and wrote it over the row, and a fresh record has no throughput: the Mbps
+  column emptied and the row was then scored with the speed term switched *off*, so "Re-probe"
+  raised the score of the address it had just re-measured (measured: `downMbps 42.5 → 0`,
+  `downTrust measured → untested`, `score 77 → 97`). The verdict is part of what the row measured, so
+  it is carried across, and the batch pass re-runs so the neighbours are still normalised against a
+  baseline that exists.
+- **A shadowsocks link in its base64 form gets the discovered address.** The legacy form is one
+  base64 blob over `method:password@host:port`, so its body carries no `@` for the rewriter to find;
+  the rewrite fell through to "return the body unchanged" and `--links` (or the GUI's "build
+  links") wrote N copies of the *original* server — every exported config pointing back at the
+  address the user started from. The body is decoded, rewritten and re-encoded, the port override
+  lands inside it, and the label names the discovery like every other scheme.
+- **An `ss://` authority that is an IPv6 address parses as an address and a port.**
+  `ss://…@2606:4700::1:2053` was read as address `2606` and port `4700` — a silently wrong target, on
+  the address family half this tool's ranges use. The authority is taken whole now, brackets and all.
+- **A malformed `--speed-url`/`--upload-url` is a config error, and it stays one.** Three defects in
+  one path: the check accepted anything starting with `https://` (including `https://`, which the
+  URL parser refuses), a value that failed the parse was *silently* swapped for Cloudflare's own
+  endpoint — so the throughput phase measured a host the user never named, with that host as the SNI
+  — and the upload URL dropped an invalid value without even the warning the speed URL got. Both are
+  full-URL checks now, both warn when they refuse one, and there is no fallback to fall back to.
+- **An endpoint that will not take the request is `rejected`, not `cut`.** A TLS alert (`handshake
+  failure`, `wrong version number`, a port that is not TLS at all — the shape behind "the download
+  test fails every address") used to be filed as a mid-transfer cut: the address was penalised as if
+  the path had reacted to volume, and `ezscan doctor` advised lowering `--speed-bytes` after a DPI
+  box that was never there. A refusal of the SYN, a reset or a silent deadline still read `cut` — on
+  an address that answered a probe on the same port a moment ago, that is the DPI signature.
+- **A links export refuses a template that cannot carry an address.** The rewriter answers "the
+  template unchanged" when it does not understand the input, and the export took that at face
+  value: an Xray/v2ray JSON document pasted into the template box produced one copy of that JSON per
+  address. Proving the rewrite works is now part of the export, and failing it is an error that says
+  what to paste instead.
+- **Smaller, same spirit.** `POST /api/retest` obeys the single-writer rule a scan start obeys
+  (409 while a scan is running, instead of re-probing a row the speed phase is writing to); the
+  session-id guard rejects Windows device names (`CON`, `NUL`, `LPT1`…) that `\w` happily matches and
+  Windows resolves to a device whatever the extension; `Output.table` no longer reads past the end of
+  its own widths array when a row has more cells than the headers; and a check that started while
+  another was still dialling no longer clears the watchdog's abort slot out from under it.
+
+### Docs
+- The README now says what the throughput column means (a verdict table, and which verdicts may
+  rank), how a resume treats settings on both surfaces (CLI flags are a patch, the GUI form is what
+  you see), the rule a `links` template has to satisfy, and the current counts. The repository also
+  gained the issue form and pull-request template it never had — both of them ask for the `ezscan
+  doctor` output first, because that is the answer to most reports.
+
+### Tests
+- 214 tests (+10). Every fix above was verified to bite: without the resume override the new test
+  fails with `expected 'typed-in-the-form.example', actual 'from-the-session.example'`; without the
+  re-probe fix it fails with `the speed phase is not what was retested / 0 !== 42.5`; the base64
+  shadowsocks test decodes the exported link and finds `1.2.3.4` in it before the fix; and the two
+  URL tests assert the warning text and the absence of a request, so a reintroduced fallback fails
+  on the request count rather than on the wording.
+
 ## 1.7.2 — 2026-09-23
 
 The speed phase exists to *order addresses by a number*, and 1.7.1 made that number stop being

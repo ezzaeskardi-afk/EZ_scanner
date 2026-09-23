@@ -285,7 +285,11 @@ export class NetworkWatchdog extends Emitter<WatchdogEvents> {
       if (controller.signal.aborted) break;
     }
     this.inFlight = false;
-    this.dialAbort = null;
+    // Only give the slot back if this round still holds it: a *second* round (a `waitUntilOnline`
+    // poll landing next to a tick) may have taken it while this one was dialling, and clearing it
+    // here left that round's socket unreachable by `stop()` — the exact hang the field exists to
+    // prevent.
+    if (this.dialAbort === controller) this.dialAbort = null;
     if (controller.signal.aborted) return !this.state.offline;
     this.state.checks += 1;
     this.state.lastCheckAt = Date.now();

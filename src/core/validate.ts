@@ -37,6 +37,24 @@ function str(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value.trim() : fallback;
 }
 
+/**
+ * A value the probe engine can actually ask for.
+ *
+ * The old check was `/^https?:\/\//`, which accepts `https://` — a value the URL parser then
+ * refuses, so the throughput phase was pointed at an endpoint that cannot exist and the URL's own
+ * hostname (which is also the SNI `speedSni` derives) was nonsense. Anything that cannot be parsed
+ * as a URL, or is not http(s), is refused here, where the user's value enters and where a warning
+ * can name it.
+ */
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export function normalizeSni(value: string): string {
   let s = value.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
   s = s.replace(/:\d+$/, '');
@@ -92,15 +110,19 @@ export function sanitizeConfig(input: Partial<ScanConfig>, base: ScanConfig = DE
   if (patch.measureUpload !== undefined) merged.measureUpload = bool(patch.measureUpload, base.measureUpload);
   if (patch.speedUrl !== undefined) {
     const url = str(patch.speedUrl, base.speedUrl);
-    merged.speedUrl = /^https?:\/\//i.test(url) ? url : base.speedUrl;
-    if (merged.speedUrl !== url) warnings.push('speed URL must be http(s) — kept the previous value');
+    merged.speedUrl = isHttpUrl(url) ? url : base.speedUrl;
+    if (merged.speedUrl !== url) warnings.push('speed URL must be a full http(s) URL — kept the previous value');
   }
   if (patch.speedSni !== undefined) merged.speedSni = normalizeSni(str(patch.speedSni, base.speedSni));
   if (patch.speedBytes !== undefined) merged.speedBytes = int(patch.speedBytes, base.speedBytes, 100_000, 2_000_000_000);
   if (patch.speedTimeoutMs !== undefined) merged.speedTimeoutMs = int(patch.speedTimeoutMs, base.speedTimeoutMs, 1000, 120_000);
   if (patch.uploadUrl !== undefined) {
     const url = str(patch.uploadUrl, base.uploadUrl);
-    merged.uploadUrl = /^https?:\/\//i.test(url) ? url : base.uploadUrl;
+    merged.uploadUrl = isHttpUrl(url) ? url : base.uploadUrl;
+    // The upload URL checks its value the same way the speed URL does — and says so. It used to
+    // drop an invalid value in silence (the warning was added for one of the two and not the
+    // other), so `--upload` against a typo'd URL quietly measured the default endpoint instead.
+    if (merged.uploadUrl !== url) warnings.push('upload URL must be a full http(s) URL — kept the previous value');
   }
   if (patch.uploadBytes !== undefined) merged.uploadBytes = int(patch.uploadBytes, base.uploadBytes, 65_536, 100_000_000);
   if (patch.topN !== undefined) merged.topN = int(patch.topN, base.topN, 0, 2000);

@@ -3,7 +3,7 @@
 **Find clean Cloudflare IPs for SNI-fronted tunnels — with a real GUI and a complete CLI.**
 Clean-IP discovery for Cloudflare fronted tunnels (vless / vmess / trojan / BPB style), with a local GUI, a scriptable CLI, resumable scans and honest diagnostics.
 
-[![tests](https://img.shields.io/badge/tests-197%20passing-brightgreen)](#tests)
+[![tests](https://img.shields.io/badge/tests-214%20passing-brightgreen)](#tests)
 [![node](https://img.shields.io/badge/node-%E2%89%A522.18-blue)](#install)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
@@ -32,7 +32,8 @@ that bug list:
 | Finding a working SNI | No SNI field in the GUI | SNI field + automatic parsing of your config link |
 | Getting the results out | Copy/export was broken | CSV, XLSX, JSON, NDJSON, clipboard and **ready configs** |
 | The line dies mid-scan | Huge unscoped scan with no rate limit | Rate limit, per-worker delay, adaptive back-off, **auto-pause when the line drops** |
-| A long scan restarts from zero | No session snapshot | Snapshot every 15 s + **resume from the cursor** |
+| A long scan restarts from zero | No session snapshot | Snapshot every 15 s + **resume from the cursor** (with the settings you can see — a resume is the same scan continued) |
+| "The download test fails every address" | A failed transfer was reported as throughput | The speed column carries a **verdict** (`measured` / `short` / `cut` / `stalled` / `refused`), and only a `measured` number may rank an address — see [Throughput](#throughput-what-the-speed-column-means) |
 | Pasting my own IP/domain list | Text files only | Paste list, CIDR, ranges, `ip:port`, domains and config links |
 
 Full mapping against the reference project's issues: [`docs/ISSUES.md`](docs/ISSUES.md).
@@ -79,7 +80,9 @@ to a live console, with a four-tab dock underneath.
 3. **Results** — a live table with sorting (and `aria-sort`), filtering, bulk selection,
    one-click copy, re-probe / re-test speed and "scan only these". The *status* column says
    **why** a row is red in plain words (`loss 67% > 50%`) while the engine's raw string
-   stays in the tooltip.
+   stays in the tooltip. The throughput columns show the rate, or the **verdict that replaced
+   it** (`!short`, `!cut`, `!stalled`, `!refused`) with the full word as the cell's tooltip;
+   *Re-probe* re-measures the probe phase only, so a row's throughput survives it.
 4. **Bottom dock** — four tabs: **Live log**, **OpenUI dashboard**, **Export & config**
    (CSV/XLSX/JSON/TXT/IPs-only plus ready configs built from your link) and **Tools**
    (saved sessions, line diagnostics, quick help).
@@ -133,6 +136,34 @@ After `ezscan doctor` has measured your line, the next `ezscan scan` **applies t
 by itself** (for 12 hours — an operator's throttling is a property of the hour, not of the
 address) and says which one it used and why. An explicit `--preset` wins, and `--no-adapt` scans
 with exactly the flags you gave.
+
+---
+
+## Throughput: what the speed column means
+
+The speed phase exists to **order addresses by a number**, so the question "did this transfer
+actually happen?" matters more than the number it produced. Every measurement carries a verdict,
+and only one of them is a number the ranking may use:
+
+| Verdict | What it means | Does it rank? |
+|---|---|---|
+| `measured` | The payload arrived (or *we* ended the window while it was still arriving). The rate describes the path. | ✅ yes |
+| `partial` | The endpoint ended the stream before the payload it had promised — a byte cap or a proxy on the endpoint. Shown as `!short`. | ❌ it is evidence *against* the path |
+| `cut` | The socket failed mid-transfer: a DPI/NAT box or an MTU hole reacting to volume. `!cut`. | ❌ evidence against the path |
+| `stalled` | The deadline passed with the stream silent for 1.5 s — the PPPoE/PMTUD hole. `!stalled`. | ❌ evidence against the path |
+| `rejected` | The endpoint answered, but not with a transfer (an error page, a TLS alert, an SNI the edge does not serve). `!refused`. | ❌ neither ranks nor penalises |
+| `untested` | The speed phase never reached this address, or the scan was stopped. `-`. | ❌ neither |
+
+Why it is not just a zero: a short transfer is measured over its **first congestion window**,
+which is where a transfer is fastest — so a gateway that caps 64 KB of an 8 MB request used to
+produce the *best-looking* number in the scan. And "we could not find out" must not beat "we found
+out, and it is slow", so a distrust (`partial`/`cut`/`stalled`) takes the speed weight with a part
+of zero, and the batch baseline is the fastest *trusted* download. The verdicts travel with the
+results: `!short`/`!cut`/`!stalled`/`!refused` in the CLI table, `down_trust`/`up_trust` in the CSV
+and XLSX, the word in the GUI tooltip, and a named verdict in the OpenUI report — so the reader and
+the ranking can never disagree. `ezscan doctor` reads the same value and gives one hint per verdict
+(a stall → the `mobin` preset, a cut → fewer bytes or `--no-speed`, a short stream → `--speed-bytes`
+or a different `--speed-url`, a refusal → a speed URL your line can reach).
 
 ---
 
@@ -213,10 +244,17 @@ and swap the address into your own config, which is exactly what "Build configs"
 |---|---|
 | `txt` | `ip:port` per line (v6 addresses bracketed) |
 | `hosts` | addresses only |
-| `csv` | 20 columns with a BOM for Excel, including the rejection reason |
+| `csv` | 22 columns with a BOM for Excel, including the rejection reason and the throughput verdicts (`down_trust`, `up_trust`) |
 | `xlsx` | a real Excel file with no external library (stored ZIP + CRC32) |
 | `json` / `ndjson` | for scripts and automation |
 | `links` | ready-to-import links: `vless://…@<ip>:443?…#EZ-<ip>-<latency>` |
+
+`links` rewrites the address into the link you paste as the template (`--link-template`, or the
+GUI's *Export & config* tab): `vless`/`trojan`/`hysteria2`/`tuic` keep their parameters, `vmess` is
+re-encoded around the new `add`, and `ss://` is rewritten in both of its forms — including the
+legacy one that is a single base64 blob. A template whose address cannot be rewritten (an
+Xray/v2ray JSON document, for instance) is refused with an error instead of being copied once per
+row.
 
 ---
 
@@ -226,6 +264,16 @@ Every scan is snapshotted automatically under `~/.ez-scanner/sessions/` (every 1
 finish/pause/stop/abort). A snapshot holds the config, the full address list, the cursor,
 the results and failure samples. `--resume` or the GUI's "Load & resume" continues from the
 exact address, even after a reboot.
+
+A resume is the same scan **continued**, which decides what happens to the settings:
+
+- **CLI**: the flags you pass are a *patch* on top of the config the session was saved with, so
+  `ezscan resume <id> --speed --top 30` adds a phase to a session whose SNI, worker count and rate
+  limit are the ones the run was actually started with. `--no-adapt` and `--preset` behave as they
+  do on `scan`.
+- **GUI**: the form is what you are looking at, so it is what the resumed run uses — the session
+  contributes its addresses, cursor and results. Editing a field and pressing resume no longer runs
+  the session's old value.
 
 ---
 
@@ -246,6 +294,14 @@ parameters.
 the edge (no proxy) and is meant for **ranking** IPs. Judge the final number inside your
 client.
 
+**The speed column says `!cut` / `!short` / `!refused` instead of a number.** That *is* the
+answer, and it is deliberately different from a `0` (see [Throughput](#throughput-what-the-speed-column-means)):
+`!short` and `!cut` are the path or the endpoint refusing a transfer it had agreed to send (lower
+`--speed-bytes`, or scan with `--no-speed`), `!stalled` is the PPPoE/PMTUD signature the `mobin`
+preset exists for, and `!refused` means the speed endpoint answered with something that is not a
+transfer — usually a `--speed-url` this line cannot reach. `ezscan doctor` prints one hint per
+verdict, and its throughput row is the same measurement the scan reads.
+
 **Does it work on a phone?** The GUI is a web page: with Node installed on Linux/Termux run
 `ezscan gui --no-open` and open the printed URL from a browser on the same network (the
 server binds loopback by default; change the bind for network access).
@@ -261,10 +317,11 @@ src/
   gui/       build-free UI (plain HTML/CSS/JS, English-only) + vendor/openui
   cli/       command line
 scripts/     maintenance tooling: OpenUI style pruning (no build step, gated in CI)
-test/        197 tests: probe against a local TLS server, stop/resume, snapshots, API and
-             security, exports, the OpenUI report, the HTML/CSS/JS contract, the CLI run as
-             a user runs it, the line-signature measurement that names a preset and the scan
-             that adopts it, the dead-code / config-field / version / stylesheet gates
+test/        214 tests: probe against a local TLS server (including every throughput
+             verdict), stop/resume, snapshots, API and security, exports, the OpenUI report,
+             the HTML/CSS/JS contract, the CLI run as a user runs it, the line-signature
+             measurement that names a preset and the scan that adopts it, the dead-code /
+             config-field / version / stylesheet gates
 ```
 
 Design philosophy: **no runtime dependencies** (only devDependencies for type checking),
@@ -304,7 +361,7 @@ chart = BarChart(chartLabels, [chartSeries], "grouped", "latency bucket", "Addre
 
 ```bash
 npm run typecheck
-npm test                  # 197 tests: probe engine, gating, pause/resume, snapshots,
+npm test                  # 214 tests: probe engine, gating, pause/resume, snapshots,
                           # exports, HTTP API, OpenUI report, GUI contract, CLI, dead code,
                           # and integration runs against a fake hostile access network
 npm run check:openui-css  # the vendored OpenUI stylesheet is still minimal, complete and correctly pinned
@@ -321,7 +378,9 @@ the claims instead of describing them: a worker burst trips the table and loses 
 the same addresses under a worker budget that fits are all found, a timeout tighter than the
 line turns it all red while a viable one turns it all green, a resetting line raises the
 inter-probe delay instead of being hammered, and a stalled transfer is measured as slow
-without hanging the run or poisoning the verdict on a healthy address — and a line that
+without hanging the run or poisoning the verdict on a healthy address (a cut, a byte cap, an
+error page, an idle deadline and a stopped scan each reach their own verdict, and a transfer
+whose bytes did arrive but whose payload never did is never allowed to rank) — and a line that
 disappears *mid-sweep* parks the scan on the spot (state `offline`, the banner, the
 `network:` log), consumes no address while it is down, and finishes the whole 60-address
 list by itself once the line is back. `test/openui.test.ts` validates the OpenUI Lang grammar itself

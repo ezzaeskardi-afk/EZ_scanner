@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { DEFAULT_CANARIES } from '../src/core/ratelimit.ts';
 import { Scanner } from '../src/core/scanner.ts';
+import { createResult, finalize, finalizeAll, recordAttempt } from '../src/core/scoring.ts';
 import { DEFAULT_CONFIG, type IpResult, type ScanConfig } from '../src/core/types.ts';
 import { startFakeEdge, startFakeTcp, type FakeEdge } from './helpers/localnet.ts';
 
@@ -227,6 +228,46 @@ test('retest refreshes selected results in place', async () => {
   const updated = await scanner.retest([key], 'probe');
   assert.equal(updated.length, 1);
   assert.ok(scanner.results.get(key)!.score > 1);
+});
+
+test('a re-probe keeps the throughput the row already paid for', async () => {
+  // A re-probe is the probe phase, not the speed phase: writing a fresh record over the row took
+  // the row's throughput with it (a fresh record has none, and `finalize` scored it with the speed
+  // term switched off), so pressing "Re-probe" emptied the Mbps column and *raised* the score of
+  // the row it had just re-measured.
+  const scanner = makeScanner();
+  await scanner.start({ targets: [`127.0.0.1:${edge.port}`], label: 'reprobe' });
+  const key = `127.0.0.1:${edge.port}`;
+  const row = scanner.results.get(key)!;
+  row.downMbps = 42.5;
+  row.downTrust = 'measured';
+  row.upMbps = 7.2;
+  row.upTrust = 'measured';
+  // A second address in the batch, so the speed term has a baseline that is not the row itself:
+  // the row is scored against this, and scored against nobody, differently.
+  const witness = createResult('198.51.100.7', 443, 'w.example');
+  recordAttempt(witness, { ok: true, latencyMs: 100, httpStatus: 200, colo: 'FRA' });
+  recordAttempt(witness, { ok: true, latencyMs: 105, httpStatus: 200, colo: 'FRA' });
+  witness.downMbps = 100;
+  witness.downTrust = 'measured';
+  scanner.results.set('198.51.100.7:443', witness);
+  finalizeAll([...scanner.results.values()], scanner.config);
+
+  await scanner.retest([key], 'probe');
+
+  assert.equal(row.downMbps, 42.5, 'the speed phase is not what was retested');
+  assert.equal(row.downTrust, 'measured');
+  assert.equal(row.upMbps, 7.2);
+  assert.equal(row.upTrust, 'measured');
+  assert.equal(row.healthy, true, 'the re-probe itself succeeded');
+  // Scored alone the row is its own fastest download, so its speed term is full marks; scored in
+  // the batch it is 42.5 of the witness's 100. The batch pass has to have run — the fresh record's
+  // score was computed with no baseline at all.
+  const alone = finalize({ ...row }, scanner.config, row.downMbps).score;
+  assert.ok(
+    row.score < alone,
+    `the row must be scored against the batch's fastest trusted download (${alone} alone vs ${row.score} in the batch)`,
+  );
 });
 
 test('network watchdog pauses nothing when disabled and reports state', async () => {

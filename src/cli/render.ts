@@ -77,7 +77,13 @@ export class Output {
 
   table(headers: string[], rows: string[][]): void {
     if (this.quiet) return;
-    const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? '').length)));
+    // Column count comes from the widest row as well as the header: a row with more cells than
+    // headers used to read `widths[i]` past the end and `padEnd(undefined)`, which silently dropped
+    // the padding (and with it the alignment) of every column after the extra cell.
+    const columns = Math.max(headers.length, ...rows.map((r) => r.length));
+    const widths = Array.from({ length: columns }, (_, i) =>
+      Math.max(headers[i]?.length ?? 0, ...rows.map((r) => (r[i] ?? '').length)),
+    );
     const render = (cells: string[]) => cells.map((c, i) => String(c ?? '').padEnd(widths[i])).join('  ');
     this.line(this.paint('bold', render(headers)));
     this.line(this.paint('dim', widths.map((w) => '-'.repeat(w)).join('  ')));

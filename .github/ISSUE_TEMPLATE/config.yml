@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: "Is it my line or my settings?"
+    url: https://github.com/ezzaeskardi-afk/EZ_scanner#faq
+    about: The FAQ, `ezscan doctor` and `ezscan selftest` answer this before an issue is needed.
+  - name: "The speed column says !short / !cut / !refused"
+    url: https://github.com/ezzaeskardi-afk/EZ_scanner#throughput-what-the-speed-column-means
+    about: What each throughput verdict means, and which one is a setting to change.
