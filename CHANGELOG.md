@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.7.4 — 2026-09-23
+
+The other half of a silent swap 1.7.3 fixed. A resume *with* settings runs the settings on screen;
+a resume **without** them — `POST /api/scan/start` carrying only `{mode:'resume', resumeId}`, which
+is what a script and a flagless `ezscan resume <id>` do — ran whatever config the server happened
+to be holding, and threw away the settings the session was saved with. This release closes that
+half, so the endpoint has one rule instead of two.
+
+### Fixed
+- **A resume that carries no settings keeps the session's own.** After the 1.7.3 override, the
+  posted config was applied whenever the request was a resume, *including* when there was nothing to
+  apply: `body.config` was `undefined`, so `start()` received the server's current config as the
+  "form" and `restore()` never got to use the snapshot's. Measured on the endpoint: a session saved
+  with `sni=the-sessions-own.example, workers=3` resumed with a bare
+  `{mode:'resume', resumeId}` ran with `sni=somewhere-else.example, workers=7` — the server's config,
+  which is the same silent replacement 1.7.3 removed, in the other direction, and a different
+  answer from `ezscan resume <id>` with no flags. The override is now sent only when the request
+  actually carries settings, and the resume path is spelled out in the README the same way the CLI's
+  flag-as-patch rule is.
+
+### Tests
+- 215 tests (+1). `a resume that carries no settings keeps the session's own` in
+  `test/server.test.ts` is self-contained — it saves a session under one set of settings, moves the
+  server's own config somewhere else (asserted first, so the two can be told apart), then resumes
+  with no config at all and reads back the config the run used. Verified to bite: with the previous
+  behaviour it fails with `expected 'the-sessions-own.example', actual 'somewhere-else.example'`.
+
 ## 1.7.3 — 2026-09-23
 
 A review pass over the whole tree again, and every entry below came out of running the code rather

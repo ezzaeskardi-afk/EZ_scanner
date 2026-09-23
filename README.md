@@ -3,7 +3,7 @@
 **Find clean Cloudflare IPs for SNI-fronted tunnels — with a real GUI and a complete CLI.**
 Clean-IP discovery for Cloudflare fronted tunnels (vless / vmess / trojan / BPB style), with a local GUI, a scriptable CLI, resumable scans and honest diagnostics.
 
-[![tests](https://img.shields.io/badge/tests-214%20passing-brightgreen)](#tests)
+[![tests](https://img.shields.io/badge/tests-215%20passing-brightgreen)](#tests)
 [![node](https://img.shields.io/badge/node-%E2%89%A522.18-blue)](#install)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
@@ -269,11 +269,13 @@ A resume is the same scan **continued**, which decides what happens to the setti
 
 - **CLI**: the flags you pass are a *patch* on top of the config the session was saved with, so
   `ezscan resume <id> --speed --top 30` adds a phase to a session whose SNI, worker count and rate
-  limit are the ones the run was actually started with. `--no-adapt` and `--preset` behave as they
-  do on `scan`.
-- **GUI**: the form is what you are looking at, so it is what the resumed run uses — the session
-  contributes its addresses, cursor and results. Editing a field and pressing resume no longer runs
-  the session's old value.
+  limit are the ones the run was actually started with. With no flags at all, the session's own
+  settings are used. `--no-adapt` and `--preset` behave as they do on `scan`.
+- **GUI / API**: the form you are looking at is what the resumed run uses — the session contributes
+  its addresses, cursor and results. Editing a field and pressing resume no longer runs the
+  session's old value. A resume request that carries no settings at all (a script calling
+  `POST /api/scan/start` without a `config`) keeps the session's own, the same as a flagless
+  `ezscan resume`.
 
 ---
 
@@ -317,7 +319,7 @@ src/
   gui/       build-free UI (plain HTML/CSS/JS, English-only) + vendor/openui
   cli/       command line
 scripts/     maintenance tooling: OpenUI style pruning (no build step, gated in CI)
-test/        214 tests: probe against a local TLS server (including every throughput
+test/        215 tests: probe against a local TLS server (including every throughput
              verdict), stop/resume, snapshots, API and security, exports, the OpenUI report,
              the HTML/CSS/JS contract, the CLI run as a user runs it, the line-signature
              measurement that names a preset and the scan that adopts it, the dead-code /
@@ -361,7 +363,7 @@ chart = BarChart(chartLabels, [chartSeries], "grouped", "latency bucket", "Addre
 
 ```bash
 npm run typecheck
-npm test                  # 214 tests: probe engine, gating, pause/resume, snapshots,
+npm test                  # 215 tests: probe engine, gating, pause/resume, snapshots,
                           # exports, HTTP API, OpenUI report, GUI contract, CLI, dead code,
                           # and integration runs against a fake hostile access network
 npm run check:openui-css  # the vendored OpenUI stylesheet is still minimal, complete and correctly pinned

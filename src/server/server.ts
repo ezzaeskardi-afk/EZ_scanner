@@ -20,7 +20,7 @@ import { applyPreset, type IpResult, type LogLine, type ScanConfig, type SourceS
 import { sanitizeConfig, sanitizeSource } from '../core/validate.ts';
 import { runDoctor } from './doctor.ts';
 
-const VERSION = '1.7.3';
+const VERSION = '1.7.4';
 const MAX_BODY = 32 * 1024 * 1024;
 
 interface EzServerOptions {
@@ -434,8 +434,15 @@ export async function createEzServer(opts: EzServerOptions = {}): Promise<EzServ
         // Without it `restore()` replaced the config with the snapshot's and every setting the
         // user could read — and had just edited — was silently discarded, even though the same
         // request had already been validated, answered `ok` and broadcast back to the GUI.
+        //
+        // Only a request that *carries* settings overrides the session's. `{mode:'resume',
+        // resumeId}` with no config is a flagless `ezscan resume <id>`, and the session's own
+        // settings are the only honest answer there — applying a config nobody posted would swap in
+        // whatever this server happens to hold, which is the same silent replacement in the other
+        // direction.
+        const posted = body.config && Object.keys(body.config).length > 0 ? config : undefined;
         void scanner
-          .start({ resumeFrom, ...(resumeFrom ? { configOverride: config } : {}), targets, label: body.label })
+          .start({ resumeFrom, ...(resumeFrom && posted ? { configOverride: posted } : {}), targets, label: body.label })
           .catch((err) => broadcast('logs', [{ at: Date.now(), level: 'error', text: `scan failed: ${(err as Error).message}` }]));
         json(res, 200, { ok: true, state: scanner.getState(), warnings, targets: targets?.length });
         return;

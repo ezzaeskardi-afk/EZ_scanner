@@ -302,6 +302,31 @@ test('a resume runs with the settings on screen, not the ones the session was sa
   assert.equal(state.config.workers, 3);
 });
 
+test('a resume that carries no settings keeps the session\'s own', async () => {
+  // The other half of the same rule. `{mode:'resume', resumeId}` with no `config` is a flagless
+  // `ezscan resume <id>`, and the session's own settings are the only honest answer — the endpoint
+  // must not silently swap in whatever config this server happens to be holding. Applying a config
+  // that was never posted is the same silent replacement the test above is about, in the other
+  // direction, and it is what the override did to every request that did not send the GUI form.
+  // A session is saved with one set of settings, and the server's own config is then moved
+  // somewhere else — so the two are told apart by the run that follows.
+  await postJson('/api/config', { config: { sni: 'the-sessions-own.example', workers: 3 } });
+  const saved = await postJson('/api/scan/save', {});
+  const id = saved.sessions[0].id;
+  await postJson('/api/config', { config: { sni: 'somewhere-else.example', workers: 7 } });
+  assert.equal((await getJson<{ config: { sni: string } }>('/api/state')).config.sni, 'somewhere-else.example');
+
+  const started = await postJson('/api/scan/start', { mode: 'resume', resumeId: id });
+  assert.equal(started.ok, true, JSON.stringify(started));
+  for (let i = 0; i < 60; i++) {
+    if ((await getJson<{ state: string }>('/api/state')).state === 'done') break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const state = await getJson<{ config: { sni: string; workers: number } }>('/api/state');
+  assert.equal(state.config.sni, 'the-sessions-own.example', "the session's own settings, not the server's");
+  assert.equal(state.config.workers, 3);
+});
+
 test('retest and summary endpoints work on the collected results', async () => {
   const retest = await postJson('/api/retest', { keys: [`127.0.0.1:${edge.port}`], mode: 'probe' });
   assert.equal(retest.updated, 1);
