@@ -1,5 +1,71 @@
 # Changelog
 
+## 1.7.2 — 2026-09-23
+
+The speed phase exists to *order addresses by a number*, and 1.7.1 made that number stop being
+reported for one shape of transfer that never happened. This release finishes the thought: the
+number now carries the verdict it rests on. A throughput cell that is empty had five causes — never
+tested, the endpoint refused, the path cut it, the line stalled, the endpoint stopped sending early
+— and after 1.7.1 three of them still arrived as the same `failed`, while the ranking read the
+emptiness as "not measured" and quietly rewarded the addresses it could tell least about. Every
+measurement now carries a `SpeedTrust` (`measured`, `partial`, `cut`, `stalled`, `rejected`,
+`untested`), and it is the verdict — not the number — that decides whether an address may rank.
+
+### Fixed
+- **A transfer the endpoint stops early is no longer a throughput number.** The last shape in which
+a rate was reported for a transfer that never happened: `drainBytes` ended a *finished* download and
+one the peer closed early as the same `close`, so a gateway that caps a response at 64 KB of the
+requested 8 MB — a rate limit, a proxy enforcing a byte cap, a DPI box being politely hostile — was
+read as a completed download. Reported as throughput it was a plausible number for a transfer that
+did not happen, and the *best-looking* number in the scan, because the part that did arrive is the
+first congestion window, where a transfer is at its fastest. The endpoint's early close now fails as
+`partial` with the fraction it reached (`after 65536 bytes of 8000000 requested (0%)`) and ranks
+nothing.
+- **The four empty throughput cells are told apart.** A blank speed cell was five facts at once, and
+only some of them are about the address — `partial`, `cut` and `stalled` are evidence the path would
+not carry a payload the endpoint had agreed to send, while `rejected` (an error page, a 403 from an
+edge that does not serve the speed host) and `untested` (nobody asked, or the scan was stopped) are
+not. The CLI prints `!short` / `!cut` / `!stalled` / `!refused` where the number would be, the CSV
+grows `down_trust`/`up_trust` (a bare `down_mbps` of `0` cannot distinguish them once it leaves the
+terminal), the GUI titles the cell with the word, the OpenUI report names it, the summary line counts
+the unusable tests (`3 speed tests unusable`), and the speed phase logs its refusals *counted by
+cause* — twenty identical warnings bury the one thing worth reading.
+- **Stopping a scan no longer blames the line.** Ctrl-C mid-transfer arrives as `abort`, which 1.7.1
+folded into the cut branch — so the user's own keystroke was recorded as "something in the path
+reacts to volume", the one verdict this whole tool exists to find. An aborted transfer is `untested`:
+it says nothing about the path, so it neither raises nor lowers it.
+- **A transfer that failed can no longer outrank one that was measured.** The speed term used to be
+skipped whenever `downMbps` was 0, which is every address the speed phase did not finish with — so
+"we could not find out" was the *safer* answer than "we found out, and it is slow": the row whose
+transfer the path cut had the term dropped, while the row that completed a slow transfer had it
+counted against it. A distrust now takes the weight with a part of 0, and `finalizeAll`'s baseline is
+the fastest *trusted* download, so a number that may not rank an address cannot raise the bar for the
+ones that may either. A line that cut or stalled every transfer drops the term for all of them rather
+than turning a whole scan red over a fault none of these addresses caused — that is the `mobin`
+preset's job.
+- **A resumed session keeps the throughput it already paid for.** A snapshot written before rows
+carried a verdict still holds numbers that were measured, and that the run ranked with. Restoring
+them as `untested` would silently drop the speed column from every row the session had already
+measured — and, with the rule above, re-score the whole restored batch. `adoptSnapshotTrust` reads an
+old row the way it was read when it was written.
+- **`ezscan doctor` and the ranking can no longer disagree about a transfer.** The signature carried
+its own `stale`/`cut` booleans beside the scan's `SpeedTrust`, so the two could name different things
+about the same bytes; `LineSignature.transfer.trust` is now the same value a scan row reads. Each
+verdict also gets its own advice instead of one `failed` hint — a stall is the MTU/PMTU hole the
+`mobin` preset is built around, a cut is something reacting to volume (fewer bytes, or `--no-speed`),
+a short stream is a byte cap on the endpoint, and a refusal is a request that does not belong on that
+endpoint at all.
+
+### Tests
+- 204 tests (+7). `drainBytes`'s endings are still pinned at the TCP level; what is new is that every
+ending is pinned to the verdict it produces. Treating an early close as a completed transfer fails
+`an endpoint that ends the stream early is not a throughput number either` with
+**`a short transfer must not be a measurement (mbps=591.66)`** — a rate limit on loopback out-ranking
+every real address, which is the whole bug in one number. Scoring a distrust the old way fails with
+`a cut transfer (90) must not beat a measured slow one (82)`. The batch with nothing measured is
+pinned separately: a stalled line still reports every address as reachable, it just makes no speed
+claim about any of them.
+
 ## 1.7.1 — 2026-09-22
 
 A review pass over the whole tree, and every entry below came out of running the code rather than

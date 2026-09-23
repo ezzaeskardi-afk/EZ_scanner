@@ -14,7 +14,7 @@ import { saveLineSignature } from '../core/linesig.ts';
 import { defaultResolve } from '../core/ipsrc.ts';
 import { measureDownload, probeOnce } from '../core/probe.ts';
 import { readUntil, tcpConnect, tlsConnect, type ConnectedSocket } from '../core/net.ts';
-import type { ProbeAttempt } from '../core/types.ts';
+import type { ProbeAttempt, SpeedTrust } from '../core/types.ts';
 
 interface Check {
   name: string;
@@ -68,8 +68,12 @@ export interface LineSignature {
    * itself is being interfered with and concurrency is not the cause.
    */
   idle: { attempts: number; ok: number; reset: number; timedOut: number; other: number };
-  /** How a large transfer behaved, when the throughput row managed to run one. */
-  transfer?: { bytes: number; targetBytes: number; stale: boolean; cut?: boolean; idleMs: number; error?: string };
+  /**
+   * How a large transfer behaved, when the throughput row managed to run one. The verdict is the
+   * same one a scan row carries (`SpeedTrust`), so the doctor and the ranking can never disagree
+   * about what happened to a transfer — the doctor reads it to name a preset, the scan to rank.
+   */
+  transfer?: { bytes: number; targetBytes: number; trust: SpeedTrust; idleMs: number; error?: string };
 }
 
 /** The preset to run, and the evidence that named it. Reachable through `DoctorReport`. */
@@ -434,6 +438,29 @@ export async function measureLineSignature(
 }
 
 /**
+ * What to do about a throughput row that produced no number.
+ *
+ * One hint per trust, because each is a different fault with a different fix — and the difference
+ * is the entire reason the verdict exists instead of a bare `failed`: a stall is the MTU hole the
+ * `mobin` preset is built around, a cut is something reacting to volume, a short stream is a byte
+ * cap, and a refusal is a request that does not belong on that endpoint at all.
+ */
+function speedHint(trust: SpeedTrust): string {
+  switch (trust) {
+    case 'stalled':
+      return 'the transfer stopped moving rather than being slow: this is the MTU/PMTU signature of a PPPoE line, so scan with the mobin preset (or --no-speed)';
+    case 'cut':
+      return 'the path cut the transfer part-way through: that is a DPI/NAT box or an MTU hole reacting to volume, so scan with fewer bytes (--speed-bytes) or leave the speed phase out (--no-speed)';
+    case 'partial':
+      return 'the endpoint stopped sending before the payload it had promised: a byte cap on the endpoint (or a proxy enforcing one), so ask for less with --speed-bytes or point --speed-url at an endpoint that serves the whole request';
+    case 'rejected':
+      return 'the speed endpoint answered, but not with a transfer — set --speed-url to a URL your line can reach, or turn the speed phase off';
+    default:
+      return 'no transfer was measured — rerun the check, or leave the speed phase out (--no-speed)';
+  }
+}
+
+/**
  * Names the preset a measured signature calls for, with the evidence, or null when the line
  * shows no operator-specific behaviour (a clean line needs no special preset).
  *
@@ -449,7 +476,7 @@ export function classifyLine(signature: LineSignature): LineRecommendation {
   const blockedUnderLoad = signature.underLoad.timedOut + signature.underLoad.reset;
   const resetRate = signature.idle.attempts ? signature.idle.reset / signature.idle.attempts : 0;
 
-  if (signature.transfer?.stale) {
+  if (signature.transfer?.trust === 'stalled') {
     const t = signature.transfer;
     reasons.push(
       `a large transfer stalled after ${t.bytes} bytes with no data for ` +
@@ -655,8 +682,7 @@ export async function runDoctor(dataDir: string, sampleSni = 'www.cloudflare.com
     transfer = {
       bytes: down.bytes,
       targetBytes: speedBytes,
-      stale: down.stale === true,
-      cut: down.cut === true,
+      trust: down.trust,
       idleMs: down.idleMs ?? 0,
       ...(down.error ? { error: down.error } : {}),
     };
@@ -665,14 +691,8 @@ export async function runDoctor(dataDir: string, sampleSni = 'www.cloudflare.com
       ok: down.ok,
       detail: down.ok
         ? `${down.mbps} Mbps over ${down.bytes} bytes`
-        : `${down.error ?? 'failed'} after ${down.bytes} bytes`,
-      hint: down.ok
-        ? undefined
-        : down.stale
-          ? 'the transfer stopped moving rather than being slow: this is the MTU/PMTU signature of a PPPoE line, so scan with the mobin preset (or --no-speed)'
-          : down.cut
-            ? 'the path cut the transfer part-way through: that is a DPI/NAT box or an MTU hole reacting to volume, so scan with fewer bytes (--speed-bytes) or leave the speed phase out (--no-speed)'
-            : 'the speed endpoint did not deliver a transfer — set --speed-url to a URL your line can reach, or turn the speed phase off',
+        : `${down.error ?? 'failed'} (${down.bytes} of ${down.targetBytes} bytes)`,
+      hint: down.ok ? undefined : speedHint(down.trust),
     });
   } catch (err) {
     checks.push({ name: 'throughput endpoint', ok: false, detail: (err as Error).message });

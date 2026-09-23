@@ -135,9 +135,59 @@ test('download measurement reports throughput in Mbps', async () => {
     controller.signal,
   );
   assert.equal(result.ok, true, result.error);
+  assert.equal(result.trust, 'measured', 'the payload arrived, so the rate is a real one');
+  assert.equal(result.ok, result.trust === 'measured', 'the verdict and the boolean are one fact');
+  assert.equal(result.targetBytes, 300_000);
   assert.ok(result.bytes >= 300_000, `got ${result.bytes} bytes`);
   assert.ok(result.mbps > 1, `mbps=${result.mbps}`);
   await server.close();
+});
+
+test('a transfer our own deadline ended is still a measurement', async () => {
+  // The other side of `partial`: here the stream is still delivering when the window closes, so
+  // the stop is ours and the rate describes the path. Without this the fix for a cut transfer
+  // could be "doubt every transfer that did not finish", which would throw away exactly the
+  // numbers a slow line produces.
+  const server = await startFakeEdge({ downloadBytes: 400_000, downloadRate: 50_000 });
+  try {
+    const result = await measureDownload(
+      { ip: '127.0.0.1', port: server.port, sni: 'speed.example' },
+      { ...base, speedBytes: 300_000, speedTimeoutMs: 600 },
+      controller.signal,
+    );
+    assert.equal(result.trust, 'measured', `a live stream cut by the deadline (${result.error ?? ''})`);
+    assert.ok(result.mbps > 0, `mbps=${result.mbps}`);
+    assert.ok(result.bytes < 300_000, `and the payload never finished (${result.bytes} bytes)`);
+    assert.ok((result.idleMs ?? 0) < 1500, 'the stream was still moving when the deadline hit');
+  } finally {
+    await server.close();
+  }
+});
+
+test('an endpoint that ends the stream early is not a throughput number either', async () => {
+  // The polite half of the same shape as a reset: a gateway that stops sending at its byte cap and
+  // closes *cleanly* — a rate limit on the endpoint, a proxy in the path, a DPI box reacting to
+  // volume without a RST. `drainBytes` calls that `close`, which is also how a completed transfer
+  // ends, so 64 KB of a requested 300 KB used to be reported as a finished download: the *best*
+  // looking number in the scan, because the first congestion window is where a transfer is fastest.
+  const server = await startFakeEdge({ downloadBytes: 64_000 });
+  try {
+    const result = await measureDownload(
+      { ip: '127.0.0.1', port: server.port, sni: 'speed.example' },
+      { ...base, speedBytes: 300_000, speedTimeoutMs: 8000 },
+      controller.signal,
+    );
+    assert.equal(result.ok, false, `a short transfer must not be a measurement (mbps=${result.mbps})`);
+    // Checked before the verdict is narrowed, because the two views are one fact.
+    assert.equal(result.ok, result.trust === 'measured', 'the verdict and the boolean are one fact');
+    assert.equal(result.trust, 'partial', 'the endpoint ended it — not the path, and not us');
+    assert.equal(result.mbps, 0, 'no throughput may be derived from a fraction of the payload');
+    assert.equal(result.targetBytes, 300_000);
+    assert.ok(result.bytes > 0 && result.bytes < 300_000, `the bytes that did arrive (${result.bytes})`);
+    assert.match(result.error ?? '', /after \d+ bytes of 300000 requested \(\d+%\)/);
+  } finally {
+    await server.close();
+  }
 });
 
 test('an error page is not a download: the status decides', async () => {
@@ -154,6 +204,7 @@ test('an error page is not a download: the status decides', async () => {
     );
     assert.equal(result.ok, false, `a 403 must not be a measurement (mbps=${result.mbps})`);
     assert.equal(result.error, 'HTTP 403');
+    assert.equal(result.trust, 'rejected', 'the endpoint answered, but not with a transfer');
     assert.equal(result.mbps, 0, 'no throughput may be derived from an error page');
   } finally {
     await server.close();
@@ -175,7 +226,7 @@ test('a transfer the path cuts is not a throughput number', async () => {
     );
     assert.equal(result.ok, false, `a cut transfer must not be a measurement (mbps=${result.mbps})`);
     assert.equal(result.mbps, 0, 'no throughput may be derived from a transfer that never arrived');
-    assert.equal(result.cut, true, 'and the reason has to be nameable, not just "failed"');
+    assert.equal(result.trust, 'cut', 'and the reason has to be nameable, not just "failed"');
     assert.ok(result.bytes > 0 && result.bytes < 300_000, `the partial bytes stay for the message (${result.bytes})`);
     assert.match(result.error ?? '', /cut after \d+ bytes/);
   } finally {
@@ -193,6 +244,8 @@ test('an upload the endpoint rejects is not throughput either', async () => {
     );
     assert.equal(result.ok, false, `a 503 must not be a measurement (mbps=${result.mbps})`);
     assert.equal(result.error, 'HTTP 503');
+    assert.equal(result.ok, result.trust === 'measured');
+    assert.equal(result.trust, 'rejected');
   } finally {
     await server.close();
   }
@@ -205,7 +258,34 @@ test('upload measurement reports throughput', async () => {
     controller.signal,
   );
   assert.equal(result.ok, true, result.error);
+  assert.equal(result.trust, 'measured');
   assert.ok(result.mbps > 0);
+});
+
+test("a stopped measurement is not the path's verdict", async () => {
+  // `drainBytes` reports `abort` when the scan is stopped, and reading that as a cut would stamp
+  // "the path cut this transfer" onto a row because the *user* pressed Ctrl-C.
+  const server = await startFakeEdge({ downloadBytes: 8_000_000, downloadRate: 100_000 });
+  const aborter = new AbortController();
+  try {
+    const promise = measureDownload(
+      { ip: '127.0.0.1', port: server.port, sni: 'speed.example' },
+      {
+        ...base,
+        speedBytes: 8_000_000,
+        speedTimeoutMs: 8000,
+        speedUrl: `https://127.0.0.1:${server.port}/__down?bytes=%BYTES%`,
+      },
+      aborter.signal,
+    );
+    setTimeout(() => aborter.abort(), 40);
+    const result = await promise;
+    assert.equal(result.ok, false);
+    assert.equal(result.trust, 'untested', `nothing was learned about this path (${result.error ?? ''})`);
+    assert.equal(result.mbps, 0);
+  } finally {
+    await server.close();
+  }
 });
 
 test('aborting mid-probe resolves instead of hanging', async () => {

@@ -43,6 +43,32 @@ export type ProbeErrorKind =
   | 'unstable'
   | 'other';
 
+/**
+ * How far a throughput measurement may be believed — and so whether it may rank anything.
+ *
+ * The speed phase exists to *order addresses by throughput*, which makes the question "did this
+ * transfer actually happen?" more important than the number it produced. Two shapes look alike on
+ * the wire and are opposite claims about the line: a completed transfer (a real rate), and a
+ * transfer the path ended early (a rate measured over the fastest part of it — the first
+ * congestion window and the ramp-up — which is why a cut always reads *fast*).
+ *
+ *   - `untested`  — the speed phase never reached this address. No evidence either way.
+ *   - `measured`  — the requested payload arrived, or *we* ended the window while the stream was
+ *                   still delivering. The rate describes the path.
+ *   - `partial`   — the endpoint ended the stream before the requested payload arrived. The bytes
+ *                   it did send are real, and that is the problem: they are the burst.
+ *   - `cut`       — the socket failed mid-transfer: a DPI/NAT box or an MTU hole reacting to volume.
+ *   - `stalled`   — the deadline passed with the stream silent for `STALL_IDLE_MS`.
+ *   - `rejected`  — the endpoint answered, but not with the payload (an HTTP error page, or nothing
+ *                   HTTP at all). Says nothing about the line's throughput — the request and the
+ *                   endpoint did not match, which usually hits every address the same way.
+ *
+ * `partial`, `cut` and `stalled` are the three that carry a verdict about the path, and the three
+ * that may never rank an address; `rejected` and `untested` carry none, so they do not penalise it
+ * either. `src/core/probe.ts` is the only producer of these values.
+ */
+export type SpeedTrust = 'untested' | 'measured' | 'partial' | 'cut' | 'stalled' | 'rejected';
+
 export interface ProbeAttempt {
   ok: boolean;
   /** Total time for the decisive step (TCP connect / TLS handshake / first byte). */
@@ -149,6 +175,10 @@ export interface IpResult {
   stabilityMs: number;
   downMbps: number;
   upMbps: number;
+  /** Whether `downMbps` may rank this address — see `SpeedTrust`. */
+  downTrust: SpeedTrust;
+  /** Whether `upMbps` may rank this address. */
+  upTrust: SpeedTrust;
   colo: string;
   /** Error kinds seen while probing (only for addresses that never succeeded). */
   errorKinds?: Record<string, number>;

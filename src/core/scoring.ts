@@ -6,7 +6,7 @@
  * a neutral value instead of a failure. Only gates the user actually enabled can
  * reject an address.
  */
-import type { IpResult, ProbeAttempt, ScanConfig } from './types.ts';
+import type { IpResult, ProbeAttempt, ScanConfig, SpeedTrust } from './types.ts';
 
 /** How many failure samples a finished scan keeps for diagnostics. */
 export const FAILURE_SAMPLE_LIMIT = 300;
@@ -30,6 +30,8 @@ export function createResult(ip: string, port: number, sni: string): IpResult {
     stabilityMs: 0,
     downMbps: 0,
     upMbps: 0,
+    downTrust: 'untested',
+    upTrust: 'untested',
     colo: '',
     score: 0,
     healthy: false,
@@ -110,9 +112,24 @@ function scoreParts(result: IpResult, cfg: ScanConfig, bestMbps: number): ScoreP
         : result.httpStatus > 0
           ? 0.6
           : 0;
-  const speed = bestMbps > 0 && result.downMbps > 0 ? clamp01(result.downMbps / bestMbps) : 0;
+  // Only a trusted transfer has a rate: everything else contributes a part of 0 and it is the
+  // *weight* (below) that decides whether that 0 counts against the address.
+  const speed =
+    result.downTrust === 'measured' && bestMbps > 0 ? clamp01(result.downMbps / bestMbps) : 0;
   return { latency, reliability, dpi, http, speed };
 }
+
+/**
+ * The trusts that are a verdict about the path, and therefore may not be skipped when scoring.
+ *
+ * "No measurement" and "the measurement failed" are not the same answer to "how fast is this
+ * address?", and skipping the speed term for both made them interchangeable: an address whose
+ * transfer the line cut had the term dropped, while the address that finished its transfer and
+ * tested *slow* had it counted — so the one that could not be measured outranked the one that
+ * could. These three are evidence (the path would not carry a payload the endpoint had agreed to
+ * send), so they get the weight with a part of 0 and can never beat a measured address.
+ */
+const DISTRUSTED: ReadonlySet<SpeedTrust> = new Set<SpeedTrust>(['partial', 'cut', 'stalled']);
 
 /** Computes score/verdict for one result; speed normalisation needs the batch. */
 export function finalize(result: IpResult, cfg: ScanConfig, bestMbps = 0): IpResult {
@@ -125,7 +142,13 @@ export function finalize(result: IpResult, cfg: ScanConfig, bestMbps = 0): IpRes
   const parts = scoreParts(result, cfg, bestMbps);
   // Only addresses that actually have a measurement take part in the speed
   // weighting — otherwise everything the speed phase skipped would look bad.
-  const speedWeight = bestMbps > 0 && result.downMbps > 0 ? WEIGHTS.speed : 0;
+  //
+  // `bestMbps > 0` means somebody in this batch completed a transfer, which is the only situation
+  // in which the speed term is a *comparison*. Without it there is nothing to compare against — a
+  // line that cut or stalled every transfer it was asked for looks like that for every address on
+  // it, mobile and fiber alike — and the term is dropped for all of them rather than turning a
+  // whole scan red over a fault none of these addresses caused.
+  const speedWeight = bestMbps > 0 && (result.downTrust === 'measured' || DISTRUSTED.has(result.downTrust)) ? WEIGHTS.speed : 0;
   const totalWeight = WEIGHTS.latency + WEIGHTS.reliability + WEIGHTS.dpi + WEIGHTS.http + speedWeight;
   const weighted =
     parts.latency * WEIGHTS.latency +
@@ -167,11 +190,30 @@ export function finalize(result: IpResult, cfg: ScanConfig, bestMbps = 0): IpRes
   return result;
 }
 
-/** Finalises a whole batch, normalising speed across it. */
+/**
+ * Finalises a whole batch, normalising speed across it.
+ *
+ * The baseline is the fastest *trusted* download in the batch, so a number that may not rank an
+ * address cannot raise the bar for the ones that may either.
+ */
 export function finalizeAll(results: IpResult[], cfg: ScanConfig): IpResult[] {
-  const bestMbps = results.reduce((acc, r) => Math.max(acc, r.downMbps || 0), 0);
+  const bestMbps = results.reduce((acc, r) => (r.downTrust === 'measured' ? Math.max(acc, r.downMbps || 0) : acc), 0);
   for (const r of results) finalize(r, cfg, bestMbps);
   return results;
+}
+
+/**
+ * Gives a row restored from an older snapshot its verdict back.
+ *
+ * A snapshot written before throughput carried a verdict still holds numbers that were measured
+ * and that the ranking used at the time, and the honest reading of one is `measured` — the same
+ * reading that number got when it was written. Left as `untested`, a resumed session would quietly
+ * drop the speed column from every row it had already paid for.
+ */
+export function adoptSnapshotTrust(result: IpResult): IpResult {
+  if (result.downTrust === undefined) result.downTrust = result.downMbps > 0 ? 'measured' : 'untested';
+  if (result.upTrust === undefined) result.upTrust = result.upMbps > 0 ? 'measured' : 'untested';
+  return result;
 }
 
 export type SortKey = 'score' | 'latency' | 'loss' | 'down' | 'up' | 'ip' | 'first';

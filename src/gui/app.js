@@ -67,6 +67,16 @@ const T = {
   remove: 'Delete session',
   ok: 'clean',
   line: { ok: 'line: ok', down: 'line: DOWN', unknown: 'line: unknown' },
+  /* The throughput columns: a missing number is a verdict, not an empty cell (`SpeedTrust` in
+     src/core/types.ts). The long version, with the byte counts, is in the log panel. */
+  trust: {
+    measured: '—',
+    untested: '—',
+    cut: '!cut',
+    stalled: '!stalled',
+    partial: '!short',
+    rejected: '!refused',
+  },
   msg: {
     done: (h, t) => `done: ${h} clean of ${t}`,
     paused: 'paused',
@@ -350,8 +360,8 @@ function renderResults() {
       <td>${num(r.port)}</td>
       <td class="${latencyClass}">${r.medianLatency ? `${num(r.medianLatency)}ms` : '—'}</td>
       <td class="${lossClass}">${num(r.lossPct)}%</td>
-      <td>${r.downMbps ? `${num(r.downMbps)}M` : '—'}</td>
-      <td>${r.upMbps ? `${num(r.upMbps)}M` : '—'}</td>
+      <td title="${escapeHtml(r.downTrust)}">${r.downMbps ? `${num(r.downMbps)}M` : T.trust[r.downTrust] ?? '—'}</td>
+      <td title="${escapeHtml(r.upTrust)}">${r.upMbps ? `${num(r.upMbps)}M` : T.trust[r.upTrust] ?? '—'}</td>
       <td>${num(r.score)}</td>
       <td>${r.httpStatus || '—'}</td>
       <td>${yesNo(r.wsOk, T.ok)}</td>

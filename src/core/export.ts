@@ -56,6 +56,12 @@ const CSV_COLUMNS: Array<{ key: string; get: (r: IpResult) => string | number }>
   // flag is the recovery pass saying "this address was found on the second chance", which is the
   // difference between a lucky sweep and a line that blocked part of it.
   { key: 'recovered', get: (r) => (r.recovered ? 'yes' : 'no') },
+  // The throughput column on its own cannot be read: a `0` means "never tested", "the endpoint
+  // refused", "the path cut it", "it stalled" and "it stopped sending early" at once, and those
+  // five are opposite verdicts on an address. The word beside the number is what makes it mean
+  // something once it leaves the terminal — `measured` is the only one `down_mbps` counts for.
+  { key: 'down_trust', get: (r) => r.downTrust },
+  { key: 'up_trust', get: (r) => r.upTrust },
 ];
 
 function csvCell(value: string | number): string {
@@ -237,5 +243,10 @@ export function summarize(results: IpResult[]): string {
   const parts = [`${results.length} reachable`, `${healthy.length} healthy`];
   if (fastest) parts.push(`fastest ${fastest.medianLatency}ms (${fastest.ip})`);
   if (best) parts.push(`top speed ${best.downMbps} Mbps (${best.ip})`);
+  // An empty speed column usually means nobody asked for one (`--speed`), but not always: the
+  // phase can run and produce nothing because the transfers did not happen. The summary is the one
+  // line a user reads before the table, so it says which of the two this was.
+  const unusable = healthy.filter((r) => r.downTrust !== 'measured' && r.downTrust !== 'untested').length;
+  if (unusable) parts.push(`${unusable} speed test${unusable === 1 ? '' : 's'} unusable`);
   return parts.join(' | ');
 }

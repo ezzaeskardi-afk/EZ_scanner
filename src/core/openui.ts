@@ -59,6 +59,30 @@ function num(value: number): number {
   return Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
 }
 
+/**
+ * One cell of the throughput column: the rate, or the verdict that stands in for it.
+ *
+ * A speed test that failed and a speed test nobody asked for both leave no number behind, and in a
+ * report they are the difference between "this address was measured and did not deliver" and "this
+ * address was never asked". The word is the same one the CLI prints and the same one the ranking
+ * reads (`SpeedTrust` in src/core/types.ts).
+ */
+function speedCell(result: IpResult): string {
+  if (result.downMbps > 0) return `${result.downMbps.toFixed(1)}Mbps`;
+  switch (result.downTrust) {
+    case 'cut':
+      return 'cut';
+    case 'stalled':
+      return 'stalled';
+    case 'partial':
+      return 'short';
+    case 'rejected':
+      return 'refused';
+    default:
+      return '—';
+  }
+}
+
 const LATENCY_BUCKETS: Array<{ label: string; max: number }> = [
   { label: '<100ms', max: 99 },
   { label: '100-199', max: 199 },
@@ -219,7 +243,7 @@ export function buildOpenUiReport(input: OpenUiReportInput): OpenUiReport {
     `${cfg.mode} :${cfg.port}`,
     input.source?.kind ?? '',
     input.state ?? '',
-    `v${input.version ?? '1.7.1'}`,
+    `v${input.version ?? '1.7.2'}`,
   ]);
 
   lines.push(`header = CardHeader(${q(L.title)}, ${q(subtitle)})`);
@@ -302,9 +326,11 @@ export function buildOpenUiReport(input: OpenUiReportInput): OpenUiReport {
           `Col(${q(L.colLoss)}, [${rows.map((r) => q(`${r.lossPct}%`)).join(', ')}])`,
           `Col(${q(L.colScore)}, [${rows.map((r) => num(r.score)).join(', ')}])`,
           `Col(${q(L.colColo)}, [${rows.map((r) => q(r.colo || '—')).join(', ')}])`,
-          // Only show the throughput column when a speed test actually ran.
-          ...(rows.some((r) => r.downMbps > 0)
-            ? [`Col(${q(L.colDown)}, [${rows.map((r) => q(r.downMbps ? `${r.downMbps.toFixed(1)}Mbps` : '—')).join(', ')}])`]
+          // Only show the throughput column when the phase had something to say about the rows:
+          // a rate, or a verdict that replaced one. The rate is read on its own as well, so a row
+          // carrying a number can never be the one that hides the column.
+          ...(rows.some((r) => r.downMbps > 0 || r.downTrust !== 'untested')
+            ? [`Col(${q(L.colDown)}, [${rows.map((r) => q(speedCell(r))).join(', ')}])`]
             : []),
         ].join(', ') +
         `])`,

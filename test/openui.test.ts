@@ -183,6 +183,22 @@ test('the throughput column appears once a speed test has run', () => {
   assert.match(statements.get('topTable')!, /Col\("Down", \["42\.5Mbps"\]\)/);
 });
 
+test('a throughput verdict is named where the number would have been', () => {
+  // "Never tested", "the endpoint refused", "the path cut it", "it stalled" and "it stopped early"
+  // all leave the throughput column empty, and only some of them are about the address. The report
+  // reads the same verdict the ranking reads, so the two can never disagree once it leaves here.
+  const cut = healthyResult('104.16.6.1', 110, { downTrust: 'cut' });
+  const refused = healthyResult('104.16.6.2', 115, { downTrust: 'rejected' });
+  const report = buildOpenUiReport({
+    stats: stats({ total: 2, done: 2, ok: 2, healthy: 2 }),
+    config: cfg,
+    results: [cut, refused],
+    generatedAt: 0,
+  });
+  const statements = assertWellFormed(report.code);
+  assert.match(statements.get('topTable')!, /Col\("Down", \["cut", "refused"\]\)/);
+});
+
 test('no clean addresses produces a warning verdict that names the gates', () => {
   const blocked = [deadResult('104.16.9.1', 'reset'), deadResult('104.16.9.2', 'reset')];
   blocked[0].reasons = ['loss 100% > 50%'];

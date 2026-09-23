@@ -41,7 +41,7 @@ test('a stalled large transfer is the fiber signature', () => {
   const verdict = classifyLine(
     signature({
       medianConnectMs: 14,
-      transfer: { bytes: 65_536, targetBytes: 300_000, stale: true, idleMs: 6200, error: 'stalled' },
+      transfer: { bytes: 65_536, targetBytes: 300_000, trust: 'stalled', idleMs: 6200, error: 'stalled' },
     }),
   );
   assert.equal(verdict.preset, 'mobin', 'a transfer that stops moving is the PPPoE/PMTU hole');
@@ -59,7 +59,7 @@ test('a stalled transfer outranks the other signatures', () => {
       underLoad: { attempts: 6, ok: 3, reset: 0, timedOut: 3, other: 0 },
       followUp: 'timeout',
       idle: { attempts: 2, ok: 1, reset: 1, timedOut: 0, other: 0 },
-      transfer: { bytes: 4096, targetBytes: 300_000, stale: true, idleMs: 8000 },
+      transfer: { bytes: 4096, targetBytes: 300_000, trust: 'stalled', idleMs: 8000 },
     }),
   );
   assert.equal(verdict.preset, 'mobin');
@@ -224,7 +224,7 @@ test('the transfer measurement sees an MTU hole, and the preset that follows', a
       new AbortController().signal,
     );
     assert.equal(down.ok, false, 'a stalled transfer is not a transfer');
-    assert.equal(down.stale, true, 'and it is reported as stalled, not as a slow line');
+    assert.equal(down.trust, 'stalled', 'and it is reported as stalled, not as a slow line');
     // The count includes the response headers, so it lands just past the stall point.
     const stalledAfter = Number(/stalled after (\d+) bytes/.exec(down.error!)?.[1]);
     assert.ok(
@@ -240,7 +240,7 @@ test('the transfer measurement sees an MTU hole, and the preset that follows', a
     sig.transfer = {
       bytes: down.bytes,
       targetBytes: cfg.speedBytes,
-      stale: down.stale === true,
+      trust: down.trust,
       idleMs: down.idleMs ?? 0,
     };
     assert.equal(classifyLine(sig).preset, 'mobin');

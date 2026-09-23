@@ -5,7 +5,7 @@
  * by colour alone, and colour can be switched off entirely (`--no-color`,
  * `NO_COLOR`, or simply piping the output anywhere).
  */
-import type { IpResult, ScanStats, LogLine } from '../core/types.ts';
+import type { IpResult, ScanStats, LogLine, SpeedTrust } from '../core/types.ts';
 import type { DoctorReport } from '../server/doctor.ts';
 
 const CODES = {
@@ -101,14 +101,38 @@ function healthTag(result: IpResult): string {
   return '[!!]';
 }
 
+/**
+ * The throughput cell.
+ *
+ * A gap here is not one fact: never tested, refused by the endpoint, cut by the path, stalled, and
+ * truncated are five different answers to "is this address worth keeping", and a bare `-` says
+ * only that the column is empty. The word behind the gap is the verdict the ranking reads; the
+ * byte counts that led to it are in the log (`speed` phase).
+ */
+function speedCell(mbps: number, trust: SpeedTrust): string {
+  if (mbps) return `${mbps}Mbps`;
+  switch (trust) {
+    case 'cut':
+      return '!cut';
+    case 'stalled':
+      return '!stalled';
+    case 'partial':
+      return '!short';
+    case 'rejected':
+      return '!refused';
+    default:
+      return '-';
+  }
+}
+
 export function resultRow(result: IpResult): string[] {
   return [
     healthTag(result),
     `${result.ip}:${result.port}`,
     result.medianLatency ? `${result.medianLatency}ms` : '-',
     `${result.lossPct}%`,
-    result.downMbps ? `${result.downMbps}Mbps` : '-',
-    result.upMbps ? `${result.upMbps}Mbps` : '-',
+    speedCell(result.downMbps, result.downTrust),
+    speedCell(result.upMbps, result.upTrust),
     String(result.score),
     result.httpStatus ? String(result.httpStatus) : '-',
     result.wsOk === null ? '-' : result.wsOk ? 'ws' : 'no-ws',

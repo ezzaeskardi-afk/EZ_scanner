@@ -33,9 +33,13 @@ test('the csv carries the recovery flag', () => {
   // record, so it always had the flag; the CSV/XLSX columns did not, and those are what people
   // paste into their client.
   const lines = toCsv([sample('104.16.0.1', 100), sample('104.16.0.2', 110, { recovered: true })]) .trim().split('\r\n');
-  assert.equal(lines[0].split(',').at(-1), 'recovered', 'the column is there');
-  assert.equal(lines[1].split(',').at(-1), 'no');
-  assert.equal(lines[2].split(',').at(-1), 'yes');
+  // Read by name rather than from the end: `down_trust`/`up_trust` follow it, and a column that
+  // moves is not a column that went missing.
+  const header = lines[0].split(',');
+  const at = header.indexOf('recovered');
+  assert.ok(at >= 0, 'the column is there');
+  assert.equal(lines[1].split(',')[at], 'no');
+  assert.equal(lines[2].split(',')[at], 'yes');
 });
 
 test('txt/hosts/links outputs are paste-ready', () => {

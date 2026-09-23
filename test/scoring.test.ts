@@ -128,12 +128,85 @@ test('speed only re-weights addresses that were actually measured', () => {
     recordAttempt(r, ok(200));
     recordAttempt(r, ok(200));
   }
+  // A rate and the verdict that it may rank are written together (`applySpeedVerdict`); a number
+  // with no verdict is the one shape the ranking may not read at all.
   fast.downMbps = 50;
+  fast.downTrust = 'measured';
   slow.downMbps = 5;
+  slow.downTrust = 'measured';
   finalizeAll([fast, slow, unmeasured], { ...cfg, measureSpeed: true, topN: 2 });
   assert.ok(fast.score > slow.score, `${fast.score} should beat ${slow.score}`);
   assert.ok(unmeasured.score > slow.score, 'an unmeasured address must not look worse than a slow one');
   assert.equal(unmeasured.healthy, true);
+});
+
+test('a transfer that failed cannot outrank one that was measured', () => {
+  // "No measurement" and "the measurement failed" both leave the throughput column empty, and
+  // treating them alike made the failed one the *safer* address: its speed term was dropped while
+  // the address that completed a slow transfer had it counted, so "we could not find out" beat
+  // "we found out, and it is slow". Every distrust is the path refusing a payload the endpoint had
+  // agreed to send, so it scores the floor against anything that was measured.
+  const measured = (mbps: number) => {
+    const r = createResult('1.0.0.1', 443, 'x.example');
+    recordAttempt(r, ok(200));
+    recordAttempt(r, ok(210));
+    r.downMbps = mbps;
+    r.downTrust = 'measured';
+    return r;
+  };
+  const fast = measured(50);
+  const slow = measured(5);
+  for (const trust of ['cut', 'stalled', 'partial'] as const) {
+    const failed = createResult(`2.0.0.${trust.length}`, 443, 'x.example');
+    recordAttempt(failed, ok(200));
+    recordAttempt(failed, ok(210));
+    failed.downTrust = trust;
+    finalizeAll([fast, slow, failed], { ...cfg, measureSpeed: true, topN: 3 });
+    assert.ok(
+      failed.score < slow.score,
+      `a ${trust} transfer (${failed.score}) must not beat a measured slow one (${slow.score})`,
+    );
+  }
+});
+
+test('a batch where no transfer completed makes no speed claim at all', () => {
+  // Every address on a stalled PPPoE line looks like every other one, so the term is dropped
+  // rather than turning the whole scan red over a fault none of these addresses caused — the
+  // `mobin` preset's job is to give that line a longer speed budget, not to lose its addresses.
+  const stalled = (ip: string) => {
+    const r = createResult(ip, 443, 'x.example');
+    recordAttempt(r, ok(200));
+    recordAttempt(r, ok(210));
+    r.downTrust = 'stalled';
+    return r;
+  };
+  const rows = [stalled('1.0.0.1'), stalled('1.0.0.2')];
+  finalizeAll(rows, { ...cfg, measureSpeed: true, topN: 2, minScore: 45 });
+  for (const r of rows) assert.equal(r.healthy, true, r.reasons.join(', '));
+});
+
+test('only a trusted number sets the baseline the others are scored against', () => {
+  // A number that may not rank an address may not raise the bar for the ones that may either.
+  const distrusted = createResult('1.0.0.9', 443, 'x.example');
+  recordAttempt(distrusted, ok(200));
+  recordAttempt(distrusted, ok(210));
+  distrusted.downMbps = 900; // a leftover from a transfer the path cut: it is not a baseline
+  distrusted.downTrust = 'cut';
+  const real = createResult('1.0.0.1', 443, 'x.example');
+  recordAttempt(real, ok(200));
+  recordAttempt(real, ok(210));
+  real.downMbps = 10;
+  real.downTrust = 'measured';
+  finalizeAll([distrusted, real], { ...cfg, measureSpeed: true, topN: 2 });
+  // Against its own 10 Mbps the measured address takes the full speed part; against 900 it would
+  // have been scored as if the line were unusable.
+  const alone = createResult('1.0.0.2', 443, 'x.example');
+  recordAttempt(alone, ok(200));
+  recordAttempt(alone, ok(210));
+  alone.downMbps = 10;
+  alone.downTrust = 'measured';
+  finalizeAll([alone], { ...cfg, measureSpeed: true, topN: 1 });
+  assert.equal(real.score, alone.score, `baseline was taken from a distrusted number (${real.score} vs ${alone.score})`);
 });
 
 test('sortResults orders by the requested key', () => {

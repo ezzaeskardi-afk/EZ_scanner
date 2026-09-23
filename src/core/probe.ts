@@ -11,7 +11,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import net from 'node:net';
-import type { ProbeAttempt, ProbeErrorKind, ScanConfig } from './types.ts';
+import type { ProbeAttempt, ProbeErrorKind, ScanConfig, SpeedTrust } from './types.ts';
 import {
   AbortedError,
   TimeoutError,
@@ -212,18 +212,35 @@ export async function probeOnce(
 
 /* ---------------------------------- throughput -------------------------------- */
 
-interface SpeedResult {
+export interface SpeedResult {
+  /**
+   * What the transfer was worth believing. The ranking reads *this* — `mbps` only counts when it
+   * says `measured` (`types.ts` documents the values, and why a cut always reads fast).
+   */
+  trust: SpeedTrust;
+  /** The same thing as a boolean, for callers that only ask "is there a number?": `trust === 'measured'`. */
   ok: boolean;
   mbps: number;
   bytes: number;
+  /** How many bytes the transfer asked for, so a short one can be read as a fraction of it. */
+  targetBytes: number;
   ms: number;
   ttfbMs: number;
-  /** The transfer stopped moving rather than being slow (`error` explains how long it was quiet). */
-  stale?: boolean;
-  /** The path cut the transfer mid-way (a socket error, or the scan was stopped). */
-  cut?: boolean;
+  /** How long the stream had been silent when reading stopped (`timeout` endings only). */
   idleMs?: number;
+  /** What went wrong, in the words of the socket where there was one. */
   error?: string;
+}
+
+/**
+ * The one place `ok` and `trust` are derived from each other.
+ *
+ * They are two views of one fact, and they were independent fields once: `drainBytes` reported
+ * *how* reading stopped while `ok` was written by hand at each return site, so a transfer the path
+ * had reset arrived as a confident number. Deriving one from the other makes that unrepresentable.
+ */
+function speedOutcome(trust: SpeedTrust, fields: Omit<SpeedResult, 'trust' | 'ok'>): SpeedResult {
+  return { ...fields, trust, ok: trust === 'measured' };
 }
 
 /**
@@ -296,89 +313,81 @@ export async function measureDownload(
       `Connection: close\r\n\r\n`;
     conn.socket.write(request);
     const drained = await drainBytes(conn.socket, cfg.speedBytes, cfg.speedTimeoutMs, signal);
-    if (drained.bytes <= 0) {
-      return { ok: false, mbps: 0, bytes: 0, ms: drained.ms, ttfbMs: drained.firstByteMs, error: 'no data' };
+    const base = {
+      mbps: 0,
+      bytes: drained.bytes,
+      targetBytes: cfg.speedBytes,
+      ms: Math.round(drained.ms),
+      ttfbMs: Math.round(drained.firstByteMs),
+      ...(drained.endedBy === 'timeout' ? { idleMs: Math.round(drained.idleMs) } : {}),
+    };
+    // A transfer that ran out of deadline while the stream had gone silent is not a slow line, it
+    // is a stuck one — the signature a PPPoE line with a broken PMTUD leaves when the response is
+    // bigger than the path MTU. Counting it as throughput reports a real number for an imaginary
+    // transfer, which is worse than failing: on fiber this number then decides the ranking of the
+    // whole speed phase. It is checked before the byte count so a stream that went quiet without
+    // ever sending anything is read as a stall — which is what it is — and not as "no data".
+    if (drained.endedBy === 'timeout' && drained.idleMs >= STALL_IDLE_MS) {
+      return speedOutcome('stalled', {
+        ...base,
+        error: `the transfer stalled after ${drained.bytes} bytes (no data for ${Math.round(drained.idleMs / 100) / 10}s)`,
+      });
     }
+    // The scan was stopped; that is a fact about us, not about this path, so it leaves no verdict
+    // on the row — a `cut` here would blame the address for the user pressing Ctrl-C.
+    if (drained.endedBy === 'abort') return speedOutcome('untested', { ...base, error: 'aborted' });
     // A socket error and a stall are the same claim about the line — "this transfer did not
     // happen" — and they were told apart only for the quiet one. `drainBytes` reported "read
     // stopped before the deadline", which is a *cut* stream and a *slow* stream at once, so a
     // transfer the path reset after 64 KB of a requested 8 MB was ranked by the throughput those
     // 64 KB happened to reach: a number for an imaginary transfer, in the phase the whole scan
     // exists for. The bytes are kept for the message, the number is not.
-    if (drained.endedBy === 'error' || drained.endedBy === 'abort') {
-      const why = drained.endedBy === 'abort' ? 'aborted' : (drained.error ?? 'connection error');
-      return {
-        ok: false,
-        mbps: 0,
-        bytes: drained.bytes,
-        ms: Math.round(drained.ms),
-        ttfbMs: Math.round(drained.firstByteMs),
-        cut: true,
-        error: `the transfer was cut after ${drained.bytes} bytes (${why})`,
-      };
+    if (drained.endedBy === 'error') {
+      return speedOutcome('cut', {
+        ...base,
+        error: `the transfer was cut after ${drained.bytes} bytes (${drained.error ?? 'connection error'})`,
+      });
     }
+    if (drained.bytes <= 0) return speedOutcome('rejected', { ...base, error: 'no data' });
     // Only a 2xx is a transfer. Anything else is an error page (or a redirect body) whose
     // size says nothing about the line, and reporting it as throughput would rank the
     // addresses by it.
     const status = statusOf(drained.head);
-    if (status === null) {
-      return {
-        ok: false,
-        mbps: 0,
-        bytes: drained.bytes,
-        ms: Math.round(drained.ms),
-        ttfbMs: Math.round(drained.firstByteMs),
-        error: 'no HTTP status line',
-      };
-    }
-    if (status < 200 || status >= 300) {
-      return {
-        ok: false,
-        mbps: 0,
-        bytes: drained.bytes,
-        ms: Math.round(drained.ms),
-        ttfbMs: Math.round(drained.firstByteMs),
-        error: `HTTP ${status}`,
-      };
-    }
-    // A transfer that ran out of deadline while the stream had gone silent is not a slow
-    // line, it is a stuck one — the signature a PPPoE line with a broken PMTUD leaves when
-    // the response is bigger than the path MTU. Counting it as throughput reports a real
-    // number for an imaginary transfer, which is worse than failing: on fiber this number
-    // then decides the ranking of the whole speed phase.
-    if (drained.endedBy === 'timeout' && drained.idleMs >= STALL_IDLE_MS) {
-      return {
-        ok: false,
-        mbps: 0,
-        bytes: drained.bytes,
-        ms: Math.round(drained.ms),
-        ttfbMs: Math.round(drained.firstByteMs),
-        stale: true,
-        idleMs: Math.round(drained.idleMs),
-        error: `the transfer stalled after ${drained.bytes} bytes (no data for ${Math.round(drained.idleMs / 100) / 10}s)`,
-      };
+    if (status === null) return speedOutcome('rejected', { ...base, error: 'no HTTP status line' });
+    if (status < 200 || status >= 300) return speedOutcome('rejected', { ...base, error: `HTTP ${status}` });
+    // The endpoint ended the stream before the payload arrived — the shape a rate limit, a proxy
+    // with a byte cap, or a DPI box that is being *polite* leaves. The bytes it did send are real
+    // bytes that really crossed the line, and that is exactly what makes them untrustworthy: they
+    // are the first congestion window, where the transfer is at its fastest, so a short transfer
+    // always reads *fast*. A gateway that caps a response at 64 KB of 8 MB therefore used to
+    // produce the best-looking number in the scan. The count is reported as a fraction so the
+    // reader can see a cap for what it is; the number never ranks anything.
+    if (drained.endedBy === 'close') {
+      const pct = Math.round((drained.bytes / Math.max(1, cfg.speedBytes)) * 100);
+      return speedOutcome('partial', {
+        ...base,
+        error: `the endpoint ended the stream after ${drained.bytes} bytes of ${cfg.speedBytes} requested (${pct}%)`,
+      });
     }
     // Throughput is measured from the first byte so the handshake/queueing
-    // latency does not pollute the number.
+    // latency does not pollute the number. A deadline *we* set while data was still flowing ends
+    // here too: nothing about the path is in doubt, the window was simply ours.
     const window = drained.ms - drained.firstByteMs;
     const seconds = (window > 50 ? window : drained.ms) / 1000;
     const mbps = (drained.bytes * 8) / seconds / 1e6;
-    return {
-      ok: true,
-      mbps: Math.round(mbps * 100) / 100,
-      bytes: drained.bytes,
-      ms: Math.round(drained.ms),
-      ttfbMs: Math.round(drained.firstByteMs),
-    };
+    return speedOutcome('measured', { ...base, mbps: Math.round(mbps * 100) / 100 });
   } catch (err) {
-    return {
-      ok: false,
+    // A dial that never completed says nothing about throughput — and an aborted one says nothing
+    // about anything, so it is not this path's verdict to carry.
+    const aborted = signal.aborted || err instanceof AbortedError;
+    return speedOutcome(aborted ? 'untested' : 'cut', {
       mbps: 0,
       bytes: 0,
+      targetBytes: cfg.speedBytes,
       ms: Date.now() - started,
       ttfbMs: 0,
-      error: (err as Error).message,
-    };
+      error: aborted ? 'aborted' : (err as Error).message,
+    });
   } finally {
     destroy(conn?.socket);
   }
@@ -414,31 +423,29 @@ export async function measureUpload(
     conn.socket.write(payload);
     const read = await readUntil(conn.socket, (d) => d.includes('\r\n\r\n'), cfg.speedTimeoutMs, signal);
     const elapsed = Date.now() - writeStart;
-    // Same rule as the download: the payload only counts if the endpoint accepted it.
+    const base = { mbps: 0, bytes, targetBytes: bytes, ms: elapsed, ttfbMs: 0 };
+    // Same rule as the download: the payload only counts if the endpoint accepted it. The payload
+    // itself always leaves the socket (it is written before the answer is read), so the verdict
+    // here is entirely about what came back.
     const status = statusOf(read.data);
     if (status === null) {
-      return { ok: false, mbps: 0, bytes, ms: elapsed, ttfbMs: 0, error: 'no response to upload' };
+      return read.ended
+        ? speedOutcome('rejected', { ...base, error: 'the endpoint closed without answering the upload' })
+        : speedOutcome('stalled', { ...base, error: `no response to the upload within ${cfg.speedTimeoutMs}ms` });
     }
-    if (status < 200 || status >= 300) {
-      return { ok: false, mbps: 0, bytes, ms: elapsed, ttfbMs: 0, error: `HTTP ${status}` };
-    }
+    if (status < 200 || status >= 300) return speedOutcome('rejected', { ...base, error: `HTTP ${status}` });
     const mbps = (bytes * 8) / Math.max(elapsed, 1) / 1000;
-    return {
-      ok: true,
-      mbps: Math.round(mbps * 100) / 100,
-      bytes,
-      ms: elapsed,
-      ttfbMs: 0,
-    };
+    return speedOutcome('measured', { ...base, mbps: Math.round(mbps * 100) / 100 });
   } catch (err) {
-    return {
-      ok: false,
+    const aborted = signal.aborted || err instanceof AbortedError;
+    return speedOutcome(aborted ? 'untested' : 'cut', {
       mbps: 0,
       bytes,
+      targetBytes: bytes,
       ms: Date.now() - started,
       ttfbMs: 0,
-      error: (err as Error).message,
-    };
+      error: aborted ? 'aborted' : (err as Error).message,
+    });
   } finally {
     destroy(conn?.socket);
   }

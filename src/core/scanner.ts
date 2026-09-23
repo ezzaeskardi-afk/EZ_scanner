@@ -14,10 +14,11 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Emitter, runPool, sleep } from './events.ts';
 import { buildTargets, splitHostPort } from './ipsrc.ts';
-import { measureDownload, measureUpload, probeOnce } from './probe.ts';
+import { measureDownload, measureUpload, probeOnce, type SpeedResult } from './probe.ts';
 import { AdaptiveBackoff, NetworkWatchdog, TokenBucket, type NetworkState, type WatchdogOptions } from './ratelimit.ts';
 import {
   FAILURE_SAMPLE_LIMIT,
+  adoptSnapshotTrust,
   createResult,
   finalize,
   finalizeAll,
@@ -34,6 +35,7 @@ import {
   type SessionMeta,
   type SessionSnapshot,
   type SourceSpec,
+  type SpeedTrust,
 } from './types.ts';
 
 export type ScannerState = 'idle' | 'expanding' | 'running' | 'paused' | 'offline' | 'stopping' | 'done' | 'stopped';
@@ -103,6 +105,39 @@ export function defaultDataDir(): string {
 
 export function resultKey(ip: string, port: number): string {
   return `${ip}:${port}`;
+}
+
+/**
+ * Writes a throughput verdict onto a row: the number only when the transfer is trusted, and always
+ * the verdict itself.
+ *
+ * A gap in the speed column has several causes that look identical once the row is printed — never
+ * tested, the endpoint refused, the path cut it, the line stalled — and the difference decides
+ * whether the address is worth keeping, so the row carries it instead of a zero that could mean
+ * any of them. The sentence with the byte counts goes to the log, which is where a diagnosis
+ * belongs; the row carries what the ranking reads.
+ */
+function applySpeedVerdict(result: IpResult, outcome: SpeedResult, direction: 'download' | 'upload'): void {
+  if (direction === 'download') {
+    result.downTrust = outcome.trust;
+    if (outcome.ok) result.downMbps = outcome.mbps;
+    return;
+  }
+  result.upTrust = outcome.trust;
+  if (outcome.ok) result.upMbps = outcome.mbps;
+}
+
+/** One speed test that produced no usable number, kept so the log can count them by cause. */
+interface SpeedRefusal {
+  key: string;
+  trust: SpeedTrust;
+  error?: string;
+}
+
+function speedRefusal(result: IpResult, outcome: SpeedResult): SpeedRefusal | null {
+  // `untested` is a stopped scan, not a refused transfer, and it is not this path's verdict.
+  if (outcome.ok || outcome.trust === 'untested') return null;
+  return { key: resultKey(result.ip, result.port), trust: outcome.trust, ...(outcome.error ? { error: outcome.error } : {}) };
 }
 
 export class Scanner extends Emitter<ScannerEvents> {
@@ -368,10 +403,13 @@ export class Scanner extends Emitter<ScannerEvents> {
     } else {
       await runPool(list, Math.max(1, Math.min(8, this.config.workers)), async (r) => {
         const down = await measureDownload({ ip: r.ip, port: r.port, sni: r.sni }, this.config, local.signal);
-        if (down.ok) r.downMbps = down.mbps;
+        applySpeedVerdict(r, down, 'download');
+        // A retest is about one address the user picked, so its reason is worth a line of its own.
+        if (!down.ok && down.trust !== 'untested') this.log('warn', `${resultKey(r.ip, r.port)} download: ${down.error ?? down.trust}`);
         if (this.config.measureUpload) {
           const up = await measureUpload({ ip: r.ip, port: r.port, sni: r.sni }, this.config, local.signal);
-          if (up.ok) r.upMbps = up.mbps;
+          applySpeedVerdict(r, up, 'upload');
+          if (!up.ok && up.trust !== 'untested') this.log('warn', `${resultKey(r.ip, r.port)} upload: ${up.error ?? up.trust}`);
         }
         finalizeAll([...this.results.values()], this.config);
         this.emit('result', r);
@@ -633,6 +671,7 @@ export class Scanner extends Emitter<ScannerEvents> {
     const concurrency = Math.max(1, Math.min(8, this.config.workers));
     let finished = 0;
 
+    const refusals: SpeedRefusal[] = [];
     if (this.config.measureSpeed) {
       await runPool(
         candidates,
@@ -640,7 +679,9 @@ export class Scanner extends Emitter<ScannerEvents> {
         async (r) => {
           if (this.abort.signal.aborted) return;
           const down = await measureDownload({ ip: r.ip, port: r.port, sni: r.sni }, this.config, this.abort.signal);
-          if (down.ok) r.downMbps = down.mbps;
+          applySpeedVerdict(r, down, 'download');
+          const refusal = speedRefusal(r, down);
+          if (refusal) refusals.push(refusal);
           finalizeAll([...this.results.values()], this.config);
           this.emit('result', r);
           finished += 1;
@@ -649,27 +690,50 @@ export class Scanner extends Emitter<ScannerEvents> {
         },
         this.abort.signal,
       );
+      this.logSpeedRefusals(refusals, candidates.length, 'download');
     }
 
     if (this.config.measureUpload && !this.abort.signal.aborted) {
       this.stats.phase = 'upload';
       const upCandidates = sortResults(candidates, 'down').slice(0, Math.max(5, Math.ceil(candidates.length / 2)));
+      const upRefusals: SpeedRefusal[] = [];
       await runPool(
         upCandidates,
         Math.max(1, Math.min(4, this.config.workers)),
         async (r) => {
           if (this.abort.signal.aborted) return;
           const up = await measureUpload({ ip: r.ip, port: r.port, sni: r.sni }, this.config, this.abort.signal);
-          if (up.ok) r.upMbps = up.mbps;
+          applySpeedVerdict(r, up, 'upload');
+          const refusal = speedRefusal(r, up);
+          if (refusal) upRefusals.push(refusal);
           finalizeAll([...this.results.values()], this.config);
           this.emit('result', r);
         },
         this.abort.signal,
       );
+      this.logSpeedRefusals(upRefusals, upCandidates.length, 'upload');
     }
 
     finalizeAll([...this.results.values()], this.config);
     this.stats.healthy = [...this.results.values()].filter((r) => r.healthy).length;
+  }
+
+  /**
+   * Says which addresses have no usable throughput number, and why — counted by cause, because
+   * the cause is usually the same for all of them (a speed URL this line cannot reach, an edge
+   * that does not serve the speed host) and twenty identical warnings bury the one thing the user
+   * needs to see. The first sentence carries the detail; the count says how far it spreads.
+   */
+  private logSpeedRefusals(refusals: SpeedRefusal[], total: number, direction: 'download' | 'upload'): void {
+    if (!refusals.length) return;
+    const byTrust = new Map<SpeedTrust, number>();
+    for (const refusal of refusals) byTrust.set(refusal.trust, (byTrust.get(refusal.trust) ?? 0) + 1);
+    const counted = [...byTrust].map(([trust, n]) => `${trust} ${n}`).join(', ');
+    const first = refusals[0]!;
+    this.log(
+      'warn',
+      `${refusals.length} of ${total} ${direction} measurements produced no usable number (${counted}) — e.g. ${first.key}: ${first.error ?? first.trust}`,
+    );
   }
 
   /* -------------------------------- progress -------------------------------- */
@@ -733,9 +797,10 @@ export class Scanner extends Emitter<ScannerEvents> {
     this.cursor = Math.min(snapshot.cursor, snapshot.targets.length);
     this.logs = [...(snapshot.logs ?? [])];
     this.results.clear();
-    for (const r of snapshot.results) this.results.set(resultKey(r.ip, r.port), r);
+    // A row written before throughput carried a verdict keeps the standing its number had.
+    for (const r of snapshot.results) this.results.set(resultKey(r.ip, r.port), adoptSnapshotTrust(r));
     this.failures.length = 0;
-    for (const f of snapshot.failures ?? []) this.failures.push(f);
+    for (const f of snapshot.failures ?? []) this.failures.push(adoptSnapshotTrust(f));
     // A snapshot only carries the diagnostic sample, so a resumed scan retries those addresses —
     // the same set the run it came from had noted at the time of the save.
     this.recoveryTargets = [];
