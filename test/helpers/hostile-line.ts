@@ -63,6 +63,16 @@ interface HostileLineStats {
   refused: number;
   /** Sessions turned away by `maxNewSessionsPerSec` — the operator's rate cap, not the table. */
   rateLimited: number;
+  /**
+   * Most sessions the line held at once. A session is counted from `accept` until the line has
+   * reaped it (`close`), and reaping lags the client by a loopback round-trip — so this counter
+   * *leads* the client's own concurrency, and by more than one when the client dials faster than
+   * the loopback reaps. Measured, not theoretical: a strictly serial caller (concurrency 1 by
+   * construction) reads a peak of 2 here, and the retry churn in `hostile-line.test.ts` drifts
+   * further. Use it for what a real conntrack table sees — "did the table fill up?" — and assert
+   * a *worker budget* on the client side (`scanner.getStats().inflight`), where the count is
+   * unambiguous.
+   */
   peakConcurrent: number;
   live: number;
   /** Times the whole line was dropped. */
