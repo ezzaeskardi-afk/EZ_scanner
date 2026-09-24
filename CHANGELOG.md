@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.7.5 — 2026-09-24
+
+One test in the previous release flaked in CI, and the tag was already cut when it did — so this
+release is that flake made explainable and then gone. The assert was `line.stats.peakConcurrent <= 4`
+in `resets make the scanner slow itself down instead of hammering`: a worker budget read off the fake
+access network. That counter is not a count of what the scanner is doing. The line counts a session
+from `accept` until it has **reaped** it, and reaping is one loopback round-trip behind the client
+letting go of the socket, so the line goes on reporting sessions the scanner has already finished
+with. The scan was never wide — the instrument was reading ahead of it. No shipped code changes in
+1.7.5: what changed is how the claim is measured, and a note that stops the next reader from
+measuring it the same way.
+
+### Fixed
+- **The worker budget is asserted on the client, not on sessions the line has not reaped yet.**
+  Dialling the fake line strictly one socket at a time — client concurrency 1 by construction — still
+  makes it report a peak of **2**, in every run: one session it is still holding after the caller has
+  let go. Under the retry churn this test creates (85% of sessions reset, five tries each, no delay
+  between them) the drift grows, and that is what the CI failure was. The assertion now samples
+  `scanner.getStats().inflight` while the sweep runs — the number of addresses in flight, which *is*
+  the budget and is unambiguous on the client side — with a self-check that the sampler observed the
+  sweep, so a budget check that measured nothing cannot pass. What the line can prove is unchanged and
+  still asserted: nothing was turned away, and the line was never dropped.
+- **`peakConcurrent` now says what it can answer.** The field's doc records that a session is counted
+  until the line reaps it, that the count therefore leads the client's own concurrency (measured: 2 for
+  a strictly serial caller), and that it is the right instrument for the question the burst test asks
+  — did the session table fill up — but not for a worker budget.
+
+### Tests
+- 215 tests, and the count does not move: this release changes how one existing test measures, not
+  what it covers. The claim was verified from both ends. The instrument: across 38 runs under CPU load
+  the scanner never had more than four sockets open at once (its own `inflight` peaked at 4, and so did
+  a socket-level count taken on the client), while the line's peak on those same runs sat at 2–4 — on
+  the boundary it flaked at. The mechanism: a strictly serial caller reads a line peak of 2, which no
+  correct budget statement can rest on. And the new assertion was mutated to fail on purpose —
+  doubling the pool in `probePhase` fails it with `the worker budget was respected throughout
+  (widest 8 in flight, budget 4)` — then reverted. 18 runs of the test in six concurrent processes,
+  the contention that produced the original flake, are green.
+
 ## 1.7.4 — 2026-09-23
 
 The other half of a silent swap 1.7.3 fixed. A resume *with* settings runs the settings on screen;
