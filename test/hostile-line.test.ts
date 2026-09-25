@@ -188,29 +188,17 @@ test('resets make the scanner slow itself down instead of hammering', async () =
      */
 
     /**
-     * The delay claim is about what the run *did*, so the factor is read across the sweep's whole
-     * lifetime, not off `stats.backoffFactor` after the fact. That field is the *last* address's
-     * value — rewritten per completed address — and it decays: `AdaptiveBackoff.record` divides it
-     * by 1.3 whenever the failure ratio drops under 0.25, so a sweep that slowed down hard and then
-     * finished on a string of successes reads 4-and-change where it peaked at 8. Measured in one
-     * local run: sampled peak 8.00, final 4.32 — the exact shape that flaked this assertion in CI.
-     * While the factor is above 1, every worker sleeps (factor − 1) × 30ms before its next address,
-     * so an elevated reading spans whole address cycles and a 5ms tick samples it repeatedly; the
-     * message carries the sample count so a starved sampler shows itself instead of failing
-     * silently. The evidence is everything the run recorded about the factor — the sampled peak and
-     * the final value, whichever is higher — and a red run says its numbers, not `expected true`.
+     * The delay claim is about what the run *did*, so it reads `stats.peakBackoffFactor` — the
+     * high-water mark the scanner itself records where the delay is applied. The live field
+     * (`stats.backoffFactor`) is the *last* completed address's value and decays:
+     * `AdaptiveBackoff.record` divides it by 1.3 whenever the failure ratio drops under 0.25, so a
+     * sweep that slowed down hard and finished on a string of successes reads 4-and-change where it
+     * peaked at 8 (measured: sampled peak 8.00, final 4.32 — the exact shape that flaked this
+     * assertion in CI on `edb2dc5`). Keeping the evidence inside the run also keeps a flake-hunt
+     * pass honest about it: the failure message carries the peak from the run that failed, with no
+     * out-of-band sampler whose timing could be the thing under load.
      */
-    let sampledPeak = 1;
-    let samples = 0;
-    const sampler = setInterval(() => {
-      samples += 1;
-      sampledPeak = Math.max(sampledPeak, scanner.getStats().backoffFactor);
-    }, 5);
-    try {
-      await scanner.start({ targets, label: 'resets' });
-    } finally {
-      clearInterval(sampler);
-    }
+    await scanner.start({ targets, label: 'resets' });
 
     const stats = scanner.getStats();
     assert.ok(line.stats.resets > 0, 'the line really was resetting a share of the sessions');
@@ -218,10 +206,9 @@ test('resets make the scanner slow itself down instead of hammering', async () =
       (stats.failuresByKind.reset ?? 0) > 0,
       `a reset is reported as a reset, not as a vague failure (saw: ${Object.keys(stats.failuresByKind).join(', ')})`,
     );
-    const observedPeak = Math.max(sampledPeak, stats.backoffFactor);
     assert.ok(
-      observedPeak > 1,
-      `the failure ratio raised the inter-probe delay (peak factor ${observedPeak} in ${samples} samples, ` +
+      stats.peakBackoffFactor > 1,
+      `the failure ratio raised the inter-probe delay (peak ${stats.peakBackoffFactor}, ` +
         `final ${stats.backoffFactor}, after ${line.stats.resets} resets)`,
     );
     assert.ok(stats.healthy > 0, 'the addresses that survived the resets are still found');

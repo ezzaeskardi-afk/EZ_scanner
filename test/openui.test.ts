@@ -34,6 +34,7 @@ const stats = (over: Partial<ScanStats> = {}): ScanStats => ({
   inflight: 0,
   paused: false,
   backoffFactor: 1,
+  peakBackoffFactor: 1,
   offline: false,
   message: '',
   failuresByKind: {},

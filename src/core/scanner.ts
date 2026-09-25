@@ -93,6 +93,7 @@ function initialStats(): ScanStats {
     inflight: 0,
     paused: false,
     backoffFactor: 1,
+    peakBackoffFactor: 1,
     offline: false,
     message: '',
     failuresByKind: {},
@@ -557,6 +558,10 @@ export class Scanner extends Emitter<ScannerEvents> {
         const factor = this.config.adaptiveBackoff ? this.backoff.factor : 1;
         const delay = baseDelay + (factor > 1 ? Math.round((factor - 1) * (30 + baseDelay)) : 0);
         this.stats.backoffFactor = factor;
+        // The sweep's own high-water mark, recorded where the delay is actually applied: a claim
+        // about what the run did reads this, not the field above, which decays back toward 1
+        // (AdaptiveBackoff.record divides it by 1.3 whenever the failure ratio drops under 0.25).
+        if (factor > this.stats.peakBackoffFactor) this.stats.peakBackoffFactor = factor;
         if (delay > 0) await sleep(delay, this.abort.signal);
       }
     };

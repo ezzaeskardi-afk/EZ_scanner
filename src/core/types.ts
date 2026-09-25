@@ -211,6 +211,8 @@ export interface ScanStats {
   inflight: number;
   paused: boolean;
   backoffFactor: number;
+  /** Highest `backoffFactor` the run reached — the value a claim about the sweep reads, since that field decays back toward 1. */
+  peakBackoffFactor: number;
   offline: boolean;
   message: string;
   /** Why addresses failed — the first thing to look at when "everything is red". */
