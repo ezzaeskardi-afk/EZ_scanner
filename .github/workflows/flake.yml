@@ -31,6 +31,10 @@ on:
         description: Busy processes to add (default 2, about half a runner)
         type: string
         default: ''
+      ref:
+        description: 'Commit, tag or branch to hunt; default is the caller''s own ref'
+        type: string
+        default: ''
   workflow_dispatch:
     inputs:
       runs:
@@ -57,6 +61,11 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Inside a called workflow this job gets a *fresh* workspace, and a bare checkout takes
+          # `github.sha` — the ref the caller RAN on, not the one it checked out. A release passes
+          # its tag here explicitly, so the commit under the hammer is the commit being shipped.
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
