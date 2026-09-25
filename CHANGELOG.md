@@ -5,9 +5,10 @@
 Two answers to the same question — *is this test telling the truth?* — because 1.7.4 shipped one that
 was not, and nothing in the pipeline was built to notice before the tag was cut. 1.7.5 fixed that
 assertion; this release is the machinery that would have found it, and the instrument that made the
-claim legible once it was found. **No file under `src/` changes**: a 1.7.5 install scans exactly as
-this one does. What is added is a way to meet a flaky claim on a schedule instead of on a release
-day, and a concurrency count that cannot run ahead of the thing it is counting.
+claim legible once it was found. **Nothing the scanner does changes**: the diff reaches `src/` only
+to bump the version literals, so a 1.7.5 install scans exactly as this one does. What is added is a
+way to meet a flaky claim on a schedule instead of on a release day, and a concurrency count that
+cannot run ahead of the thing it is counting.
 
 ### Added
 - **A flake hunt, on a schedule.** `scripts/flake-hunt.ts` runs the integration files — the ones
