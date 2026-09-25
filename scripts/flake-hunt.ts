@@ -23,6 +23,7 @@
  *   node scripts/flake-hunt.ts --files test/server.test.ts --runs 20 --load 0
  *   node scripts/flake-hunt.ts --help
  */
+import { appendFileSync } from 'node:fs';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { cpus } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -220,6 +221,71 @@ function annotate(message: string): void {
   if (process.env.GITHUB_ACTIONS) console.log(`::error::${message}`);
 }
 
+/* ------------------------------- job summary ------------------------------- */
+
+/** Escape for a markdown table cell: a pipe would split the cell, a newline would split the row. */
+function cell(text: string): string {
+  return text.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+}
+
+/** The table's head, written once before the first pass appends its row under it. */
+export const PASS_TABLE_HEADER =
+  '| pass | result | tests | passing | failing | seconds |\n|----:|--------|------:|--------:|--------:|--------:|';
+
+/** One pass, one row — appended to the job summary as the pass finishes, so a killed job still shows the passes it got through. */
+export function passRow(index: number, run: RunResult): string {
+  if (run.timedOut) return `| ${index} | timed out | — | — | — | — |`;
+  const result = run.failed.length ? `${run.failed.length} failing` : 'ok';
+  return `| ${index} | ${result} | ${run.total} | ${run.pass} | ${run.failed.length || '—'} | ${run.seconds.toFixed(1)} |`;
+}
+
+export interface HuntMeta {
+  runs: number;
+  load: number;
+  files: string[];
+  timeout: number;
+}
+
+/**
+ * The hunt's judgement as a table. The per-pass rows above say what happened pass by pass; this
+ * says what to do about it — a flake and a break want different fixes, and the green case says
+ * plainly that nothing showed up *in this window* rather than implying the tests are race-free.
+ */
+export function verdictTable(report: FlakeReport, meta: HuntMeta): string {
+  const completed = report.runs - report.timedOut;
+  const lines: string[] = [
+    '### Verdict',
+    '',
+    `${meta.runs} pass(es) · load ${meta.load} · ${meta.files.length} file(s) · timeout ${meta.timeout}s`,
+    '',
+  ];
+  if (report.timedOut) lines.push(`${report.timedOut} pass(es) never finished and are excluded from the counts below.\n`);
+  if (!report.flaked.length && !report.consistent.length) {
+    lines.push('Every run passed — no flake showed up in this window.');
+    return lines.join('\n');
+  }
+  lines.push('| test | failed | of | first message |', '|---|---:|---:|---|');
+  for (const failure of report.flaked) {
+    lines.push(`| ${cell(failure.name)} | ${failure.runs} | ${failure.of} | ${cell(failure.error.split('\n')[0] ?? '')} |`);
+  }
+  for (const failure of report.consistent) {
+    lines.push(`| ${cell(failure.name)} | ${completed} | ${completed} | ${cell(failure.error.split('\n')[0] ?? '')} |`);
+  }
+  lines.push('', 'Failing in some runs is a race (fix the test or what it measures); failing in every run is a break.');
+  return lines.join('\n');
+}
+
+/** Appends to the job summary on GitHub; a local run has no sink and says nothing extra. */
+function writeSummary(markdown: string): void {
+  const path = process.env.GITHUB_STEP_SUMMARY;
+  if (!path) return;
+  try {
+    appendFileSync(path, markdown);
+  } catch {
+    // The summary is evidence, not a gate: a bad path or a full disk must not fail the hunt.
+  }
+}
+
 interface Options {
   runs: number;
   files: string[];
@@ -284,12 +350,17 @@ async function main(): Promise<number> {
   console.log(`flake hunt: ${options.runs} runs of ${files.length} file(s), ${load} busy process(es) on ${cores} CPU(s)`);
   console.log(`  ${files.join('\n  ')}`);
 
+  // The summary is written incrementally, so a job killed mid-hunt still shows the passes it got
+  // through; the verdict lands under the table when the hunt can actually make one.
+  writeSummary(`## Flake hunt\n\n${PASS_TABLE_HEADER}\n`);
+
   const stopLoad = startLoad(load, options.runs * (options.timeout + 30) + 60);
   const runs: RunResult[] = [];
   try {
     for (let run = 1; run <= options.runs; run += 1) {
       const result = await runOnce(files, options.timeout);
       runs.push(result);
+      writeSummary(passRow(run, result) + '\n');
       const seconds = result.seconds.toFixed(0);
       if (result.timedOut) {
         console.log(`run ${run}/${options.runs}: killed after ${options.timeout}s`);
@@ -308,6 +379,7 @@ async function main(): Promise<number> {
   }
 
   const report = classify(runs);
+  writeSummary(`\n${verdictTable(report, { runs: options.runs, load, files, timeout: options.timeout })}\n`);
   console.log('');
   console.log(`flake hunt: ${options.runs} runs, ${report.timedOut} never finished`);
   if (!report.flaked.length && !report.consistent.length && !report.timedOut) {

@@ -11,7 +11,15 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { classify, failuresOf, INTEGRATION_FILES, type RunResult } from '../scripts/flake-hunt.ts';
+import {
+  classify,
+  failuresOf,
+  INTEGRATION_FILES,
+  PASS_TABLE_HEADER,
+  passRow,
+  type RunResult,
+  verdictTable,
+} from '../scripts/flake-hunt.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -91,6 +99,49 @@ test('a run that never finished is not evidence about any test', () => {
   // it a flake would be an invention. "Failed in every run that finished" is the honest reading.
   assert.deepEqual(report.flaked, []);
   assert.deepEqual(report.consistent, [{ name: 'a test that failed once', error: 'said no' }]);
+});
+
+test('every pass leaves a row the summary table can show, timeouts included', () => {
+  assert.equal(PASS_TABLE_HEADER.split('\n')[0], '| pass | result | tests | passing | failing | seconds |');
+  assert.equal(passRow(3, runOf([{ name: 'a thing failed', error: 'no' }], { seconds: 12.34, total: 6, pass: 5 })), '| 3 | 1 failing | 6 | 5 | 1 | 12.3 |');
+  assert.equal(passRow(4, runOf([], { seconds: 9.96, total: 6, pass: 6 })), '| 4 | ok | 6 | 6 | — | 10.0 |');
+  // A timed-out pass says nothing about any test, and its row says so rather than reading as zeros.
+  assert.equal(passRow(5, runOf([], { timedOut: true, seconds: 600 })), '| 5 | timed out | — | — | — | — |');
+});
+
+test('the verdict table separates what to fix from what merely happened', () => {
+  const meta = { runs: 3, load: 3, files: ['test/hostile-line.test.ts'], timeout: 600 };
+  const green = verdictTable(classify([runOf([]), runOf([]), runOf([])]), meta);
+  assert.match(green, /Every run passed — no flake showed up in this window\./);
+  assert.ok(!green.includes('|'), 'a green hunt has no failure table to fill');
+
+  const report = classify([
+    runOf([
+      { name: 'resets make the scanner slow itself down instead of hammering', error: 'peak factor 1, final 1, after 72 resets' },
+      { name: 'a test that never passes', error: 'expected 4, got 8\nline two' },
+    ]),
+    runOf([
+      { name: 'resets make the scanner slow itself down instead of hammering', error: 'peak factor 1, final 1, after 72 resets' },
+      { name: 'a test that never passes', error: 'expected 4, got 8' },
+    ]),
+    runOf([{ name: 'a test that never passes', error: 'expected 4, got 8' }]),
+  ]);
+  const mixed = verdictTable(report, meta);
+  // Flakes name their ratio; breaks name their certainty.
+  assert.match(mixed, /\| resets make the scanner slow itself down instead of hammering \| 2 \| 3 \|/);
+  assert.match(mixed, /\| a test that never passes \| 3 \| 3 \|/);
+  // The break's row names its certainty; the message's second line never lands in the cell.
+  assert.ok(mixed.includes('| a test that never passes | 3 | 3 | expected 4, got 8 |'));
+  assert.ok(!mixed.includes('line two'));
+  assert.match(mixed, /failing in every run is a break/);
+});
+
+ test('timed-out passes are excluded from the verdict and said so above it', () => {
+  const meta = { runs: 3, load: 3, files: ['test/hostile-line.test.ts'], timeout: 600 };
+  const table = verdictTable(classify([runOf([{ name: 'one bad test', error: 'no' }]), runOf([], { timedOut: true }), runOf([], { timedOut: true })]), meta);
+  assert.match(table, /2 pass\(es\) never finished and are excluded from the counts below\./);
+  // One completed run, one failure: the row must say 1 of 1, not borrow a denominator it never had.
+  assert.match(table, /\| one bad test \| 1 \| 1 \|/);
 });
 
 test('the hunt covers every test file that drives the fake access network', () => {
