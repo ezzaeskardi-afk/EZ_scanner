@@ -210,8 +210,9 @@ export interface ScanStats {
   etaMs: number;
   inflight: number;
   paused: boolean;
+  /** Live value: the factor as of the *last completed address*. It decays back toward 1 (÷1.3 whenever the failure ratio drops under 0.25), so a claim about the whole sweep reads `peakBackoffFactor`, not this. */
   backoffFactor: number;
-  /** Highest `backoffFactor` the run reached — the value a claim about the sweep reads, since that field decays back toward 1. */
+  /** Highest `backoffFactor` the sweep reached, recorded where the inter-probe delay is applied — the value a claim about the run reads. */
   peakBackoffFactor: number;
   offline: boolean;
   message: string;
