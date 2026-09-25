@@ -36,12 +36,14 @@ jobs:
           npm test 2>&1 | tee test-output.log
         timeout-minutes: 5
       # The job log needs admin rights to fetch through the API, so the failing lines are
-      # also posted as annotations, where the commit and a PR both show them.
+      # also posted as annotations, where the commit and a PR both show them. The TAP `error:`
+      # line is included so an assertion's own message travels with the annotation — a budget
+      # breach should name its numbers, not `expected: true, actual: false`.
       - name: Surface the failing tests
         if: failure()
         shell: bash
         run: |
-          grep -aE "^(✖|not ok)|AssertionError|Error \[|✖ test" test-output.log \
+          grep -aE "^(✖|not ok)|^  error: '|AssertionError|Error \[|✖ test" test-output.log \
             | head -12 \
             | while IFS= read -r line; do echo "::error::$(printf '%s' "$line" | tr -d '\r')"; done
           echo "::error::summary: $(grep -aE '^ℹ (tests|pass|fail)' test-output.log | tr '\n' ' ')"

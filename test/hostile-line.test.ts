@@ -186,7 +186,31 @@ test('resets make the scanner slow itself down instead of hammering', async () =
      * churn (85% of sessions reset, no delay between tries) is faster than that. The difference is
      * measured at the bottom of this file, with a strictly serial caller: 1 there, 2 on the line.
      */
-    await scanner.start({ targets, label: 'resets' });
+
+    /**
+     * The delay claim is about what the run *did*, so the factor is read across the sweep's whole
+     * lifetime, not off `stats.backoffFactor` after the fact. That field is the *last* address's
+     * value — rewritten per completed address — and it decays: `AdaptiveBackoff.record` divides it
+     * by 1.3 whenever the failure ratio drops under 0.25, so a sweep that slowed down hard and then
+     * finished on a string of successes reads 4-and-change where it peaked at 8. Measured in one
+     * local run: sampled peak 8.00, final 4.32 — the exact shape that flaked this assertion in CI.
+     * While the factor is above 1, every worker sleeps (factor − 1) × 30ms before its next address,
+     * so an elevated reading spans whole address cycles and a 5ms tick samples it repeatedly; the
+     * message carries the sample count so a starved sampler shows itself instead of failing
+     * silently. The evidence is everything the run recorded about the factor — the sampled peak and
+     * the final value, whichever is higher — and a red run says its numbers, not `expected true`.
+     */
+    let sampledPeak = 1;
+    let samples = 0;
+    const sampler = setInterval(() => {
+      samples += 1;
+      sampledPeak = Math.max(sampledPeak, scanner.getStats().backoffFactor);
+    }, 5);
+    try {
+      await scanner.start({ targets, label: 'resets' });
+    } finally {
+      clearInterval(sampler);
+    }
 
     const stats = scanner.getStats();
     assert.ok(line.stats.resets > 0, 'the line really was resetting a share of the sessions');
@@ -194,7 +218,12 @@ test('resets make the scanner slow itself down instead of hammering', async () =
       (stats.failuresByKind.reset ?? 0) > 0,
       `a reset is reported as a reset, not as a vague failure (saw: ${Object.keys(stats.failuresByKind).join(', ')})`,
     );
-    assert.ok(stats.backoffFactor > 1, 'the failure ratio raised the inter-probe delay');
+    const observedPeak = Math.max(sampledPeak, stats.backoffFactor);
+    assert.ok(
+      observedPeak > 1,
+      `the failure ratio raised the inter-probe delay (peak factor ${observedPeak} in ${samples} samples, ` +
+        `final ${stats.backoffFactor}, after ${line.stats.resets} resets)`,
+    );
     assert.ok(stats.healthy > 0, 'the addresses that survived the resets are still found');
     assert.equal(line.stats.refused, 0, 'the line never ran out of sessions');
     assert.equal(line.stats.outages, 0, 'and it was never dropped');
