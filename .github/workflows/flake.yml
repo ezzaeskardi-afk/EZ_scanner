@@ -87,8 +87,19 @@ jobs:
           RUNS: ${{ inputs.runs || (github.event.schedule == '47 4 * * 0' && 30 || 3) }}
           FILES: ${{ inputs.files }}
           LOAD: ${{ inputs.load || (github.event.schedule == '47 4 * * 0' && 3 || 2) }}
+          FLAKE_HUNT_RESULTS: ${{ github.workspace }}/flake-hunt-results.json
         run: |
           args=(--runs "$RUNS")
           if [ -n "$FILES" ]; then args+=(--files "$FILES"); fi
           if [ -n "$LOAD" ]; then args+=(--load "$LOAD"); fi
           node scripts/flake-hunt.ts "${args[@]}"
+      # The evidence outlives the job log: every pass as measured, plus the verdict once the
+      # hunt can make one. Uploaded even on failure — a red hunt is exactly the one whose file
+      # is worth keeping — and a missing file is a broken hunt, not a broken upload.
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flake-hunt-results
+          path: flake-hunt-results.json
+          if-no-files-found: error

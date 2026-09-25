@@ -23,7 +23,7 @@
  *   node scripts/flake-hunt.ts --files test/server.test.ts --runs 20 --load 0
  *   node scripts/flake-hunt.ts --help
  */
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, writeFileSync } from 'node:fs';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { cpus } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -286,6 +286,35 @@ function writeSummary(markdown: string): void {
   }
 }
 
+/**
+ * The hunt's evidence, written to the path in `FLAKE_HUNT_RESULTS` when one is set: the run's
+ * parameters, every pass as recorded, and — once the hunt can make one — the verdict. It is
+ * rewritten after each pass, so a job killed mid-hunt still leaves the passes it got through;
+ * only a missing `verdict` says the hunt never finished classifying. The workflow uploads the
+ * file as an artifact, so the evidence outlives the job log that also holds it.
+ */
+export interface HuntResultsFile {
+  startedAt: string;
+  runs: number;
+  load: number;
+  files: string[];
+  timeoutSeconds: number;
+  passes: RunResult[];
+  verdict?: FlakeReport;
+}
+
+/** Best-effort: evidence must never be the thing that fails a hunt. False when skipped or unwritable. */
+export function writeResultsFile(record: HuntResultsFile): boolean {
+  const path = process.env.FLAKE_HUNT_RESULTS;
+  if (!path) return false;
+  try {
+    writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 interface Options {
   runs: number;
   files: string[];
@@ -354,12 +383,26 @@ async function main(): Promise<number> {
   // through; the verdict lands under the table when the hunt can actually make one.
   writeSummary(`## Flake hunt\n\n${PASS_TABLE_HEADER}\n`);
 
+  // The evidence file follows the same discipline: every pass lands in it the moment it is
+  // measured, so an interrupted hunt still uploads the passes it completed.
+  const resultsFile: HuntResultsFile = {
+    startedAt: new Date().toISOString(),
+    runs: options.runs,
+    load,
+    files,
+    timeoutSeconds: options.timeout,
+    passes: [],
+  };
+  writeResultsFile(resultsFile);
+
   const stopLoad = startLoad(load, options.runs * (options.timeout + 30) + 60);
   const runs: RunResult[] = [];
   try {
     for (let run = 1; run <= options.runs; run += 1) {
       const result = await runOnce(files, options.timeout);
       runs.push(result);
+      resultsFile.passes.push(result);
+      writeResultsFile(resultsFile);
       writeSummary(passRow(run, result) + '\n');
       const seconds = result.seconds.toFixed(0);
       if (result.timedOut) {
@@ -379,6 +422,8 @@ async function main(): Promise<number> {
   }
 
   const report = classify(runs);
+  resultsFile.verdict = report;
+  writeResultsFile(resultsFile);
   writeSummary(`\n${verdictTable(report, { runs: options.runs, load, files, timeout: options.timeout })}\n`);
   console.log('');
   console.log(`flake hunt: ${options.runs} runs, ${report.timedOut} never finished`);

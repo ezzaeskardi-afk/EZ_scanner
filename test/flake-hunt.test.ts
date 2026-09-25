@@ -7,18 +7,21 @@
  * message is the whole error (inline), one with a diff (a block), and a subtest.
  */
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   classify,
   failuresOf,
+  type HuntResultsFile,
   INTEGRATION_FILES,
   PASS_TABLE_HEADER,
   passRow,
   type RunResult,
   verdictTable,
+  writeResultsFile,
 } from '../scripts/flake-hunt.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -142,6 +145,44 @@ test('the verdict table separates what to fix from what merely happened', () => 
   assert.match(table, /2 pass\(es\) never finished and are excluded from the counts below\./);
   // One completed run, one failure: the row must say 1 of 1, not borrow a denominator it never had.
   assert.match(table, /\| one bad test \| 1 \| 1 \|/);
+});
+
+test('the evidence file holds every pass and the verdict, and skips quietly with no sink', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'flake-hunt-evidence-'));
+  const path = join(dir, 'results.json');
+  const previous = process.env.FLAKE_HUNT_RESULTS;
+  process.env.FLAKE_HUNT_RESULTS = path;
+  try {
+    // The same discipline the hunt runs under: passes land one at a time, the verdict last.
+    const record: HuntResultsFile = {
+      startedAt: '2026-09-26T00:00:00.000Z',
+      runs: 3,
+      load: 3,
+      files: ['test/hostile-line.test.ts'],
+      timeoutSeconds: 600,
+      passes: [runOf([])],
+    };
+    assert.equal(writeResultsFile(record), true, 'a set path means the file is written');
+    let parsed = JSON.parse(readFileSync(path, 'utf8')) as HuntResultsFile;
+    assert.equal(parsed.passes.length, 1, 'rewritten after each pass, so an interrupted hunt keeps what it measured');
+    assert.equal(parsed.verdict, undefined, 'no verdict until the hunt can actually make one');
+
+    record.passes.push(runOf([{ name: 'a thing failed', error: 'no' }]), runOf([], { timedOut: true }));
+    record.verdict = classify(record.passes);
+    assert.equal(writeResultsFile(record), true);
+    parsed = JSON.parse(readFileSync(path, 'utf8')) as HuntResultsFile;
+    assert.equal(parsed.passes.length, 3);
+    assert.deepEqual(parsed.verdict?.flaked.map((f) => f.name), ['a thing failed']);
+    assert.equal(parsed.verdict?.timedOut, 1);
+
+    // A local run has no sink: a quiet skip reported honestly, not a crash.
+    delete process.env.FLAKE_HUNT_RESULTS;
+    assert.equal(writeResultsFile(record), false);
+  } finally {
+    if (previous === undefined) delete process.env.FLAKE_HUNT_RESULTS;
+    else process.env.FLAKE_HUNT_RESULTS = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('the hunt covers every test file that drives the fake access network', () => {
