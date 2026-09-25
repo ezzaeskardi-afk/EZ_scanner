@@ -79,6 +79,64 @@ test('adaptive backoff slows down on failures and recovers on success', () => {
   assert.equal(backoff.factor, 1);
 });
 
+test('the decay step is exactly /1.3, taken once the failure ratio drops under 0.25', () => {
+  // Ten failures raise the factor (1.25 per record past the threshold, ratio → 0.893); five
+  // successes then walk the ratio down to ~0.292 without ever leaving the raise/hold band —
+  // so the next success is precisely the record that crosses under 0.25, and the step it
+  // takes must be exactly /1.3. The whole point of pinning this: `stats.backoffFactor` is
+  // the live field this decay pulls back toward 1, which is what made the reset-churn
+  // assertion in `hostile-line.test.ts` flake when it read a finished sweep's last value.
+  const backoff = new AdaptiveBackoff();
+  for (let i = 0; i < 10; i++) backoff.record(false);
+  for (let i = 0; i < 5; i++) backoff.record(true);
+  const before = backoff.factor;
+  assert.ok(before > 1, 'setup: a real failure spike must have raised the factor');
+
+  backoff.record(true);
+  assert.ok(
+    Math.abs(backoff.factor - before / 1.3) < 1e-9,
+    `one decay step, exactly /1.3 (got ${backoff.factor}, want ${before / 1.3})`,
+  );
+});
+
+test('the factor never decays below 1', () => {
+  // Continue decaying past the point where /1.3 would undershoot: the floor is exact,
+  // not asymptotic — a calm line reads exactly 1, the same value a fresh run starts on.
+  const backoff = new AdaptiveBackoff();
+  for (let i = 0; i < 10; i++) backoff.record(false);
+  for (let i = 0; i < 5; i++) backoff.record(true);
+  assert.ok(backoff.factor > 1, 'setup: there is something to decay');
+
+  for (let i = 0; i < 10; i++) backoff.record(true);
+  assert.equal(backoff.factor, 1, 'decays stop at 1, never below it');
+
+  const calm = new AdaptiveBackoff();
+  for (let i = 0; i < 10; i++) calm.record(true);
+  assert.equal(calm.factor, 1, 'and successes alone never push it under 1 either');
+});
+
+test('a ratio between 0.25 and the threshold holds the factor still', () => {
+  // Ten failures, then successes until the ratio lands in the band (0.457) with the factor
+  // well above 1. Two more successes keep the ratio inside (0.366, 0.292) — the factor must
+  // not move a hair either way: this band is why a recovering sweep keeps its slowdown even
+  // while its failure ratio no longer qualifies as a spike.
+  const held = new AdaptiveBackoff();
+  for (let i = 0; i < 10; i++) held.record(false);
+  held.record(true); // ratio 0.714 — above the threshold, still raising
+  held.record(true); // ratio 0.571 — above the threshold, still raising
+  held.record(true); // ratio 0.457 — inside the band
+  const frozen = held.factor;
+  assert.ok(frozen > 1, 'setup: the factor is elevated while the ratio is not a spike');
+
+  for (let i = 0; i < 2; i++) {
+    held.record(true);
+    assert.equal(held.factor, frozen, 'the band holds the factor still');
+  }
+
+  held.record(true); // ratio 0.234 — under 0.25: the hold ends, the decay step begins
+  assert.ok(held.factor < frozen, 'and decay resumes the moment the ratio leaves the band');
+});
+
 test('without a configured canary the built-ins are used', () => {
   assert.deepEqual(new NetworkWatchdog().canaries, DEFAULT_CANARIES);
   assert.deepEqual(new NetworkWatchdog({ canaries: () => [] }).canaries, DEFAULT_CANARIES);
