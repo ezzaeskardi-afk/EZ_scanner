@@ -144,7 +144,17 @@ const PROFILES: OperatorProfile[] = [
 interface Run {
   healthy: number;
   elapsed: number;
-  line: { peakConcurrent: number; refused: number; rateLimited: number; outages: number; resets: number; stalls: number };
+  line: {
+    /** Peak sockets the *caller* had open: the worker-budget number (see `helpers/client-sockets.ts`). */
+    clientPeak: number;
+    /** Peak sessions the line held, which runs ahead of the caller by a round-trip it has not reaped. */
+    peakConcurrent: number;
+    refused: number;
+    rateLimited: number;
+    outages: number;
+    resets: number;
+    stalls: number;
+  };
   failures: Record<string, number>;
 }
 
@@ -169,11 +179,12 @@ async function run(profile: OperatorProfile, config: Partial<ScanConfig>): Promi
   const started = Date.now();
   await scanner.start({ targets: targetsFor(line.port), label: `${profile.name} ${config.workers}w` });
   const { peakConcurrent, refused, rateLimited, outages, resets, stalls } = line.stats;
+  const clientPeak = line.client.peak;
   await line.close();
   return {
     healthy: scanner.getStats().healthy,
     elapsed: Date.now() - started,
-    line: { peakConcurrent, refused, rateLimited, outages, resets, stalls },
+    line: { clientPeak, peakConcurrent, refused, rateLimited, outages, resets, stalls },
     failures: scanner.getStats().failuresByKind,
   };
 }
@@ -197,7 +208,8 @@ for (const profile of PROFILES) {
     // mode on record.
     const safe = await run(profile, { ...preset!, ...HELD });
     const report = (label: string, r: Run) =>
-      `${label}: found ${r.healthy}/${ADDRESSES} · peak ${r.line.peakConcurrent} sessions · ` +
+      `${label}: found ${r.healthy}/${ADDRESSES} · peak ${r.line.clientPeak} sockets ` +
+      `(the line held ${r.line.peakConcurrent}) · ` +
       `${r.line.refused} turned away (${r.line.rateLimited} by the rate cap) · ${r.line.outages} outages · ` +
       `${r.line.resets} resets · ${r.elapsed}ms · failures ${JSON.stringify(r.failures)}`;
 
@@ -218,9 +230,10 @@ for (const profile of PROFILES) {
     // the network did is deterministic, and this is the claim that survives repetition: nobody
     // turns the preset away, while the burst is turned away.
     assert.equal(safe.line.refused, 0, `${profile.name}: the preset must never have a session turned away`);
+    assert.ok(safe.line.clientPeak > 0, `${profile.name}: the preset really did dial the line`);
     assert.ok(
-      safe.line.peakConcurrent <= preset!.workers!,
-      `${profile.name}: peak ${safe.line.peakConcurrent} sessions must stay inside the preset's ${preset!.workers} workers`,
+      safe.line.clientPeak <= preset!.workers!,
+      `${profile.name}: peak ${safe.line.clientPeak} sockets must stay inside the preset's ${preset!.workers} workers`,
     );
     assert.ok(
       safe.healthy >= Math.ceil(ADDRESSES * 0.9),

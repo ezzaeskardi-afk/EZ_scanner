@@ -20,7 +20,7 @@ import { runDoctor, runSelfTest } from '../server/doctor.ts';
 import { openBrowser } from './openbrowser.ts';
 import { Output, RESULT_HEADERS, nextStepHints, printDoctor, resultRow } from './render.ts';
 
-const VERSION = '1.7.5';
+const VERSION = '1.7.6';
 
 /* ───────────────────────────── arg parsing ───────────────────────────── */
 

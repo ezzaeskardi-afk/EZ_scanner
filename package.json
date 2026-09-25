@@ -1,6 +1,6 @@
 {
   "name": "ez-scanner",
-  "version": "1.7.5",
+  "version": "1.7.6",
   "description": "EZ Scanner — clean-IP discovery engine for Cloudflare/SNI tunnels with a powerful local GUI and a scriptable CLI",
   "type": "module",
   "license": "MIT",
@@ -43,6 +43,7 @@
     "test": "node --test --test-concurrency=1 \"test/**/*.test.ts\"",
     "check:deadcode": "node --test test/deadcode.test.ts",
     "check:openui-css": "node --test test/openui-css.test.ts",
+    "check:flake": "node scripts/flake-hunt.ts",
     "prune:openui": "node scripts/prune-openui-css.ts",
     "notes": "node scripts/release-notes.ts",
     "check": "npm run typecheck && npm test"

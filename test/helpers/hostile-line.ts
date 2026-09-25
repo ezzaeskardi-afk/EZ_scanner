@@ -20,6 +20,11 @@
  *   - **An MTU/MSS blackhole**: the response headers and the first bytes arrive, the rest
  *     never does — the PPPoE/PMTU pathology where TLS is fine and a large transfer stalls.
  *
+ * What it counts is split on purpose: the session table's own view (`stats` — an accept until the
+ * line reaps it, which is what a real conntrack table would show) and the caller's (`client` — the
+ * sockets it had open at once, see `client-sockets.ts` for why that is the one a *worker budget*
+ * belongs on, and why the two numbers differ).
+ *
  * Everything is loopback-only. Bind to all interfaces (`listenAll`) when one fake line has
  * to stand in for many addresses (`127.0.0.1`, `127.0.0.2`, …).
  */
@@ -27,6 +32,7 @@ import { readFileSync } from 'node:fs';
 import https from 'node:https';
 import type { AddressInfo, Socket } from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { watchClientSockets, type ClientSockets } from './client-sockets.ts';
 
 export interface HostileLineOptions {
   /** Concurrent connections the session table holds; going past it is what hurts. */
@@ -70,8 +76,7 @@ interface HostileLineStats {
    * the loopback reaps. Measured, not theoretical: a strictly serial caller (concurrency 1 by
    * construction) reads a peak of 2 here, and the retry churn in `hostile-line.test.ts` drifts
    * further. Use it for what a real conntrack table sees — "did the table fill up?" — and assert
-   * a *worker budget* on the client side (`scanner.getStats().inflight`), where the count is
-   * unambiguous.
+   * a *worker budget* on `HostileLine.client`, which counts the caller's own sockets.
    */
   peakConcurrent: number;
   live: number;
@@ -89,6 +94,13 @@ export interface HostileLine {
   port: number;
   /** Counters for the *whole* life of the listener; call `resetStats()` between runs. */
   stats: HostileLineStats;
+  /**
+   * The same sessions, counted on the caller's side of the wire: how many sockets it had open at
+   * once, which is exact and cannot lag (see `client-sockets.ts`). `stats.peakConcurrent` answers
+   * "did the session table fill up?"; this answers "how wide did the caller run?", which is the
+   * question a worker budget asks.
+   */
+  client: ClientSockets;
   /** Drops the line now for `ms`: every live session dies and new ones are turned away. */
   drop(ms: number): void;
   isDead(): boolean;
@@ -252,9 +264,12 @@ export function startHostileLine(opts: HostileLineOptions): Promise<HostileLine>
   return new Promise((resolve) => {
     server.listen(0, opts.listenAll ? '0.0.0.0' : '127.0.0.1', () => {
       const { port } = server.address() as AddressInfo;
+      // From here on, every socket the caller opens to this port is counted on its own side.
+      const client = watchClientSockets(port);
       resolve({
         port,
         stats,
+        client,
         drop,
         isDead: () => Date.now() < deadUntil,
         resetStats: () => {
@@ -263,9 +278,11 @@ export function startHostileLine(opts: HostileLineOptions): Promise<HostileLine>
           }
           stats.live = live.size;
           stats.peakConcurrent = live.size;
+          client.reset();
         },
         close: () =>
           new Promise<void>((done) => {
+            client.stop();
             for (const socket of sockets) socket.destroy();
             sockets.clear();
             live.clear();

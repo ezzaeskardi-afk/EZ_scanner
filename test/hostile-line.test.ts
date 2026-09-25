@@ -22,6 +22,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
+import tls from 'node:tls';
 import { Scanner } from '../src/core/scanner.ts';
 import { DEFAULT_CONFIG, type ScanConfig } from '../src/core/types.ts';
 import { startHostileLine, waitUntilLineUp } from './helpers/hostile-line.ts';
@@ -110,9 +111,16 @@ test('a burst past the session limit drops the line; a worker budget that fits d
     await budgeted.start({ targets, label: 'budgeted' });
 
     assert.equal(line.stats.outages, 0, 'a sweep that never fills the table never drops the line');
+    // The budget is read off the caller's own sockets (`line.client`), not off the sessions the
+    // line has not reaped yet — that counter leads the caller by a loopback round-trip, which is
+    // how the earlier form of this assertion flaked in CI (see `helpers/client-sockets.ts`).
     assert.ok(
-      line.stats.peakConcurrent <= 6,
-      `peak ${line.stats.peakConcurrent} must stay inside the worker budget (and the session limit)`,
+      line.client.peak <= 6,
+      `peak ${line.client.peak} sockets must stay inside the worker budget of 6 (the line's table holds 12)`,
+    );
+    assert.ok(
+      line.client.opened >= targets.length,
+      `the caller really did dial the line (${line.client.opened} sessions opened)`,
     );
     assert.equal(line.stats.refused, 0, 'nothing was turned away');
     assert.equal(budgeted.getStats().healthy, targets.length, 'all 24 addresses are found on a line that stayed up');
@@ -171,25 +179,14 @@ test('resets make the scanner slow itself down instead of hammering', async () =
     scanner.configure(config(line.port, { tries: 5, minSuccesses: 1, workers: 4, adaptiveBackoff: true }));
 
     /**
-     * The budget is asserted on the scanner's own count, not on the line's `peakConcurrent`.
-     * The line counts a session from `accept` until it has *reaped* it, and reaping is one
-     * loopback round-trip behind the client letting go of the socket — so it reports sessions
-     * the scanner has already finished with. That is measurable, not theoretical: dialling
-     * `helpers/hostile-line.ts` strictly one socket at a time (so the client's concurrency is
-     * 1 by construction) still makes it report a peak of 2, and under the retry churn this
-     * test creates the drift grows. "This assert flaked in CI" was that drift, not a scan
-     * that ran wide — the scanner never had more than four sockets open in 38 loaded runs.
-     * A worker budget is a statement about the client, so it is read from the client.
+     * The budget is read off the caller's own sockets: `line.client` counts one from the `connect`
+     * that opens it to the `destroy` that closes it, both on this side of the wire, so it cannot
+     * lag. The line's `peakConcurrent` is the wrong instrument for this — it counts a session until
+     * the line has *reaped* it, one loopback round-trip behind the caller, and this test's retry
+     * churn (85% of sessions reset, no delay between tries) is faster than that. The difference is
+     * measured at the bottom of this file, with a strictly serial caller: 1 there, 2 on the line.
      */
-    let widest = 0;
-    const sampler = setInterval(() => {
-      widest = Math.max(widest, scanner.getStats().inflight);
-    }, 5);
-    try {
-      await scanner.start({ targets, label: 'resets' });
-    } finally {
-      clearInterval(sampler);
-    }
+    await scanner.start({ targets, label: 'resets' });
 
     const stats = scanner.getStats();
     assert.ok(line.stats.resets > 0, 'the line really was resetting a share of the sessions');
@@ -201,8 +198,14 @@ test('resets make the scanner slow itself down instead of hammering', async () =
     assert.ok(stats.healthy > 0, 'the addresses that survived the resets are still found');
     assert.equal(line.stats.refused, 0, 'the line never ran out of sessions');
     assert.equal(line.stats.outages, 0, 'and it was never dropped');
-    assert.ok(widest > 0, 'the sampler observed the sweep — a budget check that measured nothing proves nothing');
-    assert.ok(widest <= 4, `the worker budget was respected throughout (widest ${widest} in flight, budget 4)`);
+    assert.ok(
+      line.client.peak <= 4,
+      `the worker budget was respected throughout (widest ${line.client.peak} sockets, budget 4)`,
+    );
+    assert.ok(
+      line.client.opened >= addresses,
+      `every address was dialled at least once, so the count measured something (${line.client.opened} sessions opened)`,
+    );
   } finally {
     await line.close();
   }
@@ -337,6 +340,7 @@ test('a line that drops mid-sweep parks the scan, and the scan finishes on its o
     );
     assert.equal(still.done, parked.done, `no address is probed while parked (done went ${parked.done} → ${still.done})`);
     assert.equal(still.inflight, 0, 'the workers let go of an address instead of holding it through the outage');
+    assert.equal(line.client.live, 0, 'and no session is left open on the line while the scan waits');
     assert.equal(still.failed, parked.failed, 'a line outage must not be recorded as an address failure');
     assert.match(
       parked.message,
@@ -371,6 +375,43 @@ test('a line that drops mid-sweep parks the scan, and the scan finishes on its o
   } finally {
     if (scanner.getState() !== 'done') await scanner.stop();
     await running;
+    await line.close();
+  }
+});
+
+/**
+ * The instrument's own contract, and the reason the budgets above are read from `line.client`.
+ *
+ * A caller that awaits one socket's teardown before opening the next has a concurrency of 1 by
+ * construction — so a faithful count says 1, and anything else is the counter's own problem. The
+ * line's `peakConcurrent` is not faithful: it keeps a session until it has reaped it, which is a
+ * loopback round-trip behind this caller's `destroy`.
+ */
+test("the caller's own count is exact, where the line's own runs ahead of it", async () => {
+  const line = await startHostileLine({ sessionLimit: 32, listenAll: true });
+  const dials = 120;
+  try {
+    for (let i = 0; i < dials; i += 1) {
+      await new Promise<void>((resolve) => {
+        const socket = tls.connect(
+          { host: '127.0.0.1', port: line.port, rejectUnauthorized: false, servername: 'localhost' },
+          () => {
+            socket.destroy();
+            resolve();
+          },
+        );
+        socket.on('error', () => resolve());
+      });
+    }
+
+    assert.equal(line.client.peak, 1, 'one socket at a time is one socket at a time');
+    assert.equal(line.client.live, 0, 'and none of them is still open');
+    assert.equal(line.client.opened, dials, `every dial was counted exactly once (saw ${line.client.opened})`);
+    // What the line's own counter read at that moment is the lag, not the caller: this exact loop
+    // read `peakConcurrent` 2 in 15 of 15 local rounds while the caller's count stayed at 1. It is
+    // deliberately not asserted — on a machine slow enough for the line to reap a session before
+    // the next dial lands, 1 is the honest reading there too, and the caller's count is the claim.
+  } finally {
     await line.close();
   }
 });

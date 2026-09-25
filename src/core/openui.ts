@@ -243,7 +243,7 @@ export function buildOpenUiReport(input: OpenUiReportInput): OpenUiReport {
     `${cfg.mode} :${cfg.port}`,
     input.source?.kind ?? '',
     input.state ?? '',
-    `v${input.version ?? '1.7.5'}`,
+    `v${input.version ?? '1.7.6'}`,
   ]);
 
   lines.push(`header = CardHeader(${q(L.title)}, ${q(subtitle)})`);

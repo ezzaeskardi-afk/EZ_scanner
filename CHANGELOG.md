@@ -1,5 +1,78 @@
 # Changelog
 
+## 1.7.6 — 2026-09-25
+
+Two answers to the same question — *is this test telling the truth?* — because 1.7.4 shipped one that
+was not, and nothing in the pipeline was built to notice before the tag was cut. 1.7.5 fixed that
+assertion; this release is the machinery that would have found it, and the instrument that made the
+claim legible once it was found. **No file under `src/` changes**: a 1.7.5 install scans exactly as
+this one does. What is added is a way to meet a flaky claim on a schedule instead of on a release
+day, and a concurrency count that cannot run ahead of the thing it is counting.
+
+### Added
+- **A flake hunt, on a schedule.** `scripts/flake-hunt.ts` runs the integration files — the ones
+  that drive a real scan against the fake access network — again and again with a busy process per
+  CPU on top. The load is the *machine* being busy rather than the tests being parallel, which is
+  the contention that produced the original failure: a real runner is shared, and CPU taken away
+  from the process is what a quiet single pass cannot reproduce. It then separates what it found
+  instead of only going red, because the two want different fixes: a test that fails in *some* runs
+  has a race in it (the test, or the thing it measures), while one that fails in *every* run that
+  finished is simply broken. Runs killed at the timeout are excluded from both counts — a starved
+  pass says nothing about any test — and each failure is posted as an annotation against the commit
+  on CI, with the assertion's own message, so which claim flaked does not depend on reading a job
+  log through the API. `npm run check:flake` locally, with `--runs 6` for a longer hunt,
+  `--files test/server.test.ts` to point it at one suspect, and `--load 0` to hunt without
+  contention.
+- **A nightly `Flake hunt` workflow**, and a dispatchable one: `gh workflow run flake.yml -f
+  runs=6`, or `-f files=test/server.test.ts -f runs=20`. Nightly rather than on every push on
+  purpose — repeated integration runs per push cost more than the answer is worth, and a flake
+  should not block a push, it should be *known*. The job's own load is two busy processes on a
+  4-vCPU runner (about half the machine, inside a 60-minute timeout), not the script's default of
+  one per CPU but one, which is right on a developer's machine and reads as a timeout on a runner.
+
+### Fixed
+- **Plain TCP dials were silently uncounted by the new client counter.** `net.connect` hands
+  `Socket.prototype.connect` the arguments it has *already* normalized, as an **array**, while
+  `tls.connect` passes the options object itself — so a port check that only looked at
+  `arguments[0]` counted one protocol and not the other. The symptom was specific: `opened` stuck at
+  1 while the server had clearly accepted session 2. The extractor now recurses into an array.
+- **A socket's end of life cannot be a `'close'` listener.** `destroy(socket)` in `src/core/net.ts`
+  strips the socket's listeners before destroying it, so a counter waiting for `'close'` would leak
+  every socket that path closed. The counter hooks `destroy` on the prototype as well, and both
+  paths are idempotent through a `WeakMap`, so a socket is counted exactly once whichever way it
+  goes.
+
+### Tests
+- 220 tests (+5). Two of them are the flake hunt's own: `test/flake-hunt.test.ts` pins the TAP
+  reading (an inline `error:`, a block `error: |-`, and a subtest surfacing as the parent that
+  failed, so one failure is not counted twice) and the flake/break split, including that a
+  timed-out run is excluded; it also fails if a test file starts using the hostile-line harness
+  without being listed as an integration file, because a hunt over a stale list goes quiet exactly
+  when a new file is added. Verified to bite: removing `recovery-pass` from the list fails it.
+- **The worker budget is now read off the caller's own sockets.** `test/helpers/client-sockets.ts`
+  counts sockets the caller opened to the line and destroyed again (`live`, `peak`, `opened`), by
+  patching `net.Socket.prototype.connect`/`destroy` while a watcher is registered, keyed by port, and
+  restoring them when the last one stops. Both ends of a socket's life are on the caller's side of
+  the wire, so unlike the line's `peakConcurrent` — which counts a session until it has *reaped* it,
+  one loopback round-trip behind the caller — this number cannot lag. `HostileLine` exposes it as
+  `line.client`, `resetStats()` resets it and `close()` stops it.
+- The three budget assertions that were reading the line's session count now read the caller's:
+  the burst test (`line.client.peak <= 6`), the reset-churn test (`line.client.peak <= 4`) and the
+  operator-profile budgets (`clientPeak <= preset.workers`), each with a lower bound proving the
+  count measured a scan that happened at all — `line.client.opened`, not a sampler. The parked-scan
+  test gained `line.client.live === 0` while the scan waits out an outage, and the operator-profile
+  evidence line now prints both numbers side by side, e.g. `peak 40 sockets (the line held 30)`.
+- **The instrument has its own proof test.** 120 strictly serial TLS dials — concurrency 1 by
+  construction — read `peak 1`, `opened 120`, `live 0` on the caller's side, which is the claim the
+  budgets above rest on. The same loop read the line's own `peakConcurrent` **2 in 15 of 15 local
+  rounds**, and that is deliberately not asserted: it is the lag being demonstrated, and on a
+  machine slow enough for the line to reap a session before the next dial lands, 1 is the honest
+  reading there too. The budget assertions were mutated to fail on purpose — doubling the pool in
+  `probePhase` fails them with `peak 12 sockets must stay inside the worker budget of 6 …` and
+  `the worker budget was respected throughout (widest 8 sockets, budget 4)` — and the mutation was
+  reverted. `npm run check:flake -- --runs 2` is green, twice, under 15 busy processes; so is the
+  full suite.
+
 ## 1.7.5 — 2026-09-24
 
 One test in the previous release flaked in CI, and the tag was already cut when it did — so this

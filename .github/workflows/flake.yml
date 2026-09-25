@@ -1,0 +1,57 @@
+name: Flake hunt
+
+# A race passes a single quiet pass by construction, which is how 1.7.4 shipped a test that failed
+# on a runner while passing everywhere the suite was run once in a row (the assertion and its fix
+# are in the 1.7.5 notes). This job is that suite, repeated while its CPU is being taken away,
+# which is the only cheap way to meet such a failure.
+#
+# Nightly rather than part of CI on purpose: repeated integration runs on every push cost more than
+# the answer is worth, and a flake should not block a push — it should be *known*. Run it by hand
+# around a release, or when a test looks suspicious:
+#
+#   gh workflow run flake.yml -f runs=6
+#   gh workflow run flake.yml -f files=test/server.test.ts -f runs=20      # one suspect file
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Passes over the suite
+        default: '3'
+      files:
+        description: Comma-separated files, instead of the integration suite
+        default: ''
+      load:
+        description: Busy processes to add (default 2, about half a runner)
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  hunt:
+    name: integration suite, repeated under load
+    runs-on: ubuntu-latest
+    # Three passes, with two busy processes on a 4-vCPU runner: enough taken away to expose the
+    # races this exists for, and still inside the timeout with room for a slow pass. The script's
+    # own default is hard (one busy process per CPU but one), which is right on a developer's
+    # machine and wrong on a runner — there a starved pass reads as a timeout rather than a flake.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --no-audit --no-fund
+      - name: Flake hunt
+        shell: bash
+        env:
+          RUNS: ${{ inputs.runs || 3 }}
+          FILES: ${{ inputs.files }}
+          LOAD: ${{ inputs.load || 2 }}
+        run: |
+          args=(--runs "$RUNS")
+          if [ -n "$FILES" ]; then args+=(--files "$FILES"); fi
+          if [ -n "$LOAD" ]; then args+=(--load "$LOAD"); fi
+          node scripts/flake-hunt.ts "${args[@]}"
