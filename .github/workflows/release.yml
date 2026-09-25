@@ -16,8 +16,25 @@ permissions:
   contents: write
 
 jobs:
+  # No race reaches a published artifact: the tag's own commit is hunted before anything is
+  # packaged — six passes over the integration files with three of the runner's four CPUs made
+  # busy (the 1.7.6 manual hunt under that exact load ran each pass in ~73s, so this adds about
+  # eight minutes to a release that already spends three on the suite). `workflow_call` cannot
+  # take a ref and `uses` checks out the tag by itself, so the commit under the hammer is the
+  # commit being shipped; the re-publish path (workflow_dispatch on an older tag) keeps the same
+  # property by checking that tag out first. A red hunt fails the release; the tag is not
+  # rewritten — the fix lands on `main` and the next tag carries it, or this workflow is
+  # dispatched on the same tag once the flake is understood, which re-runs the hunt too.
+  hunt:
+    name: flake hunt on the tagged commit
+    uses: ./.github/workflows/flake.yml
+    with:
+      runs: '6'
+      load: '3'
+
   publish:
     name: verify, package and publish
+    needs: hunt
     runs-on: ubuntu-latest
     env:
       TAG: ${{ github.event.inputs.tag || github.ref_name }}

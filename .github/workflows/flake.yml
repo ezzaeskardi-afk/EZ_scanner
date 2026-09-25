@@ -7,13 +7,30 @@ name: Flake hunt
 #
 # Nightly rather than part of CI on purpose: repeated integration runs on every push cost more than
 # the answer is worth, and a flake should not block a push — it should be *known*. Run it by hand
-# around a release, or when a test looks suspicious:
+# when a test looks suspicious:
 #
 #   gh workflow run flake.yml -f runs=6
 #   gh workflow run flake.yml -f files=test/server.test.ts -f runs=20      # one suspect file
+#
+# The release workflow also calls this (`workflow_call`) on the tag's own commit, with more passes
+# and a busier machine, and does not publish the release until it is green.
 on:
   schedule:
     - cron: '17 3 * * *'
+  workflow_call:
+    inputs:
+      runs:
+        description: Passes over the suite
+        type: string
+        default: '3'
+      files:
+        description: Comma-separated files, instead of the integration suite
+        type: string
+        default: ''
+      load:
+        description: Busy processes to add (default 2, about half a runner)
+        type: string
+        default: ''
   workflow_dispatch:
     inputs:
       runs:

@@ -423,13 +423,18 @@ run is a break, and the two want different fixes. It runs nightly in the `Flake 
 and it is one command locally, with `--runs 6` for a longer hunt or `--files test/server.test.ts`
 to point it at one suspect file. A failure is posted as an annotation against the commit, along
 with the assertion's own message, so finding out which claim flaked does not depend on reading a
-job log through the API.
+job log through the API. And a race must not reach a published artifact, so every release waits
+on this hunt: the release workflow calls it on the tag's own commit — six passes, three busy
+CPUs — and publishes nothing until it is green.
 
 ## Releases
 
-Pushing a `v*` tag publishes a release on its own: the workflow runs the typecheck, the two
-gates and the test suite, packages the tracked files as `ez-scanner-<version>.zip`, writes
-`SHA256SUMS.txt`, takes the notes from `CHANGELOG.md` and attaches all three. The same notes
+Pushing a `v*` tag publishes a release on its own: the workflow first hunts the tagged commit for
+flakes (six passes of the integration suite under CPU contention — a red hunt holds the release,
+since the fix belongs on `main` and the next tag, not in a rewrite of a published one), then runs
+the typecheck, the two gates and the test suite, packages the tracked files as
+`ez-scanner-<version>.zip`, writes `SHA256SUMS.txt`, takes the notes from `CHANGELOG.md` and
+attaches all three. The same notes
 are one command locally (`npm run notes -- 1.3.0`), so what a release says is what the
 changelog says. The zip needs no build step, no dependencies and no toolchain — Node 22.18+
 is the only requirement.
