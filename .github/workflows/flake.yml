@@ -6,8 +6,10 @@ name: Flake hunt
 # which is the only cheap way to meet such a failure.
 #
 # Nightly rather than part of CI on purpose: repeated integration runs on every push cost more than
-# the answer is worth, and a flake should not block a push — it should be *known*. Run it by hand
-# when a test looks suspicious:
+# the answer is worth, and a flake should not block a push — it should be *known*. The nightly is
+# the cheap floor (3 passes, load 2); Sunday night widens the net (30 passes, load 3 — the scale
+# that caught the burst precondition flake in the 1.7.6 A/B experiment) for the races too rare to
+# meet in a single night. Run it by hand when a test looks suspicious:
 #
 #   gh workflow run flake.yml -f runs=6
 #   gh workflow run flake.yml -f files=test/server.test.ts -f runs=20      # one suspect file
@@ -16,7 +18,13 @@ name: Flake hunt
 # and a busier machine, and does not publish the release until it is green.
 on:
   schedule:
+    # Nightly: the cheap floor — three passes at load 2.
     - cron: '17 3 * * *'
+    # Sunday night: the heavy hunt — thirty passes at load 3, for the races too rare to meet in a
+    # single night. A race that fails ~4 passes in 30 shows up in the nightly about a third of
+    # nights; at thirty passes a week it is near-certain, for one 40-minute run rather than a
+    # wider hunt every day.
+    - cron: '47 4 * * 0'
   workflow_call:
     inputs:
       runs:
@@ -73,9 +81,12 @@ jobs:
       - name: Flake hunt
         shell: bash
         env:
-          RUNS: ${{ inputs.runs || 3 }}
+          # A manual dispatch or the release gate says what it wants. A scheduled run carries no
+          # inputs, and the cron string is the only way it can say which schedule it is — the
+          # nightly falls back to the cheap default, the Sunday cron to the heavy one.
+          RUNS: ${{ inputs.runs || (github.event.schedule == '47 4 * * 0' && 30 || 3) }}
           FILES: ${{ inputs.files }}
-          LOAD: ${{ inputs.load || 2 }}
+          LOAD: ${{ inputs.load || (github.event.schedule == '47 4 * * 0' && 3 || 2) }}
         run: |
           args=(--runs "$RUNS")
           if [ -n "$FILES" ]; then args+=(--files "$FILES"); fi
