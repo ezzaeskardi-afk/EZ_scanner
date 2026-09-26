@@ -95,11 +95,13 @@ jobs:
           node scripts/flake-hunt.ts "${args[@]}"
       # The evidence outlives the job log: every pass as measured, plus the verdict once the
       # hunt can make one. Uploaded even on failure — a red hunt is exactly the one whose file
-      # is worth keeping — and a missing file is a broken hunt, not a broken upload.
+      # is worth keeping. The release gate hunts the TAGGED tree (that is the point of it), and
+      # a tag from before the evidence feature exists produces no file by design — that is a
+      # warn, not a failure: the hunt of an old tag is none the less green for it.
       - name: Keep the evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: flake-hunt-results
           path: flake-hunt-results.json
-          if-no-files-found: error
+          if-no-files-found: warn

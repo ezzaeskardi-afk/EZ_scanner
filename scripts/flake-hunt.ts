@@ -303,14 +303,20 @@ export interface HuntResultsFile {
   verdict?: FlakeReport;
 }
 
-/** Best-effort: evidence must never be the thing that fails a hunt. False when skipped or unwritable. */
+/**
+ * Best-effort: evidence must never be the thing that fails a hunt. False when skipped (no sink
+ * set — the local case, silent by design) or unwritable — and the unwritable case is *loud*,
+ * because a sink that was asked for and silently never produced the file would fail an artifact
+ * upload two steps later with no clue why.
+ */
 export function writeResultsFile(record: HuntResultsFile): boolean {
   const path = process.env.FLAKE_HUNT_RESULTS;
   if (!path) return false;
   try {
     writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`);
     return true;
-  } catch {
+  } catch (err) {
+    console.error(`flake hunt: could not write the evidence file (${path}): ${(err as Error).message}`);
     return false;
   }
 }
