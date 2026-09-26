@@ -32,9 +32,19 @@ import { readFileSync } from 'node:fs';
 import https from 'node:https';
 import type { AddressInfo, Socket } from 'node:net';
 import { fileURLToPath } from 'node:url';
+import tls from 'node:tls';
 import { watchClientSockets, type ClientSockets } from './client-sockets.ts';
 
 export interface HostileLineOptions {
+  /**
+   * Sessions the line holds open before the caller dials (must be ≤ `sessionLimit`, and meant
+   * for tables without reset churn): a burst test's table-full precondition is then set by the
+   * harness, deterministically, instead of racing the scan's own dial speed — which is a
+   * property of the machine, not the scanner, and flaked 4 of 30 passes in the 1.7.6 A/B hunt.
+   * They ride the normal connection path, so they are counted in `live`; a drop destroys them
+   * like any session and they never re-fill on their own.
+   */
+  preFill?: number;
   /** Concurrent connections the session table holds; going past it is what hurts. */
   sessionLimit: number;
   /** What happens above the limit: a reset, or a socket that accepts and never answers. */
@@ -266,6 +276,19 @@ export function startHostileLine(opts: HostileLineOptions): Promise<HostileLine>
       const { port } = server.address() as AddressInfo;
       // From here on, every socket the caller opens to this port is counted on its own side.
       const client = watchClientSockets(port);
+
+      // The harness fills the table itself: `preFill` idle sessions dialled and held open, so a
+      // burst test's precondition is deterministic instead of racing the scan's dial speed.
+      // The holders are unconnected TLS sockets — the server's own 'connection' path does the
+      // bookkeeping (they sit in `live`), and their sockets need an error handler so a reset
+      // arriving before the TLS layer is up does not throw ECONNRESET at the holder.
+      if (opts.preFill) {
+        for (let i = 0; i < opts.preFill; i += 1) {
+          const holder = tls.connect({ host: '127.0.0.1', port, rejectUnauthorized: false });
+          holder.on('error', () => {});
+        }
+      }
+
       resolve({
         port,
         stats,

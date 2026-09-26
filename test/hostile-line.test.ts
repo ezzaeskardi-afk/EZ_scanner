@@ -77,7 +77,13 @@ async function waitFor(check: () => boolean, timeoutMs: number): Promise<boolean
 }
 
 test('a burst past the session limit drops the line; a worker budget that fits does not', async () => {
-  const line = await startHostileLine({ sessionLimit: 12, outageMs: 800, listenAll: true, baseDelayMs: 25 });
+  // `preFill` sets the table-full precondition deterministically: 10 idle sessions are dialled
+  // and held open by the harness, so any extra caller session MUST trip the limit. The old form
+  // asked the scan's own 20 workers to outrun the table's 12 slots, and whether they managed it
+  // depended on how fast the machine ran the sweep — under CPU contention they dialed slowly
+  // enough to finish inside the table, and the precondition flaked 4 of 30 passes in the 1.7.6
+  // A/B hunt. The scan's dial speed is a property of the machine; the table being full is not.
+  const line = await startHostileLine({ sessionLimit: 12, outageMs: 800, listenAll: true, baseDelayMs: 25, preFill: 10 });
   const targets = Array.from({ length: 24 }, (_, i) => `127.0.0.${i + 1}:${line.port}`);
   try {
     // The shape of scan that makes an operator (or a home ONU) react: as many sessions as
@@ -88,12 +94,14 @@ test('a burst past the session limit drops the line; a worker budget that fits d
     line.resetStats();
     await abusive.start({ targets, label: 'abusive' });
     const abusiveStats = abusive.getStats();
-
-    assert.equal(abusiveStats.phase, 'done', 'the scan still finishes when the line drops under it');
+    // resetStats() snapshots the holders into `live`/`peakConcurrent`, so the precondition is
+    // read as 10 held + 2+ scan sessions — absolute, no longer an assertion about dial speed.
     assert.ok(
       line.stats.peakConcurrent >= 12,
-      `the burst has to fill the session table for this test to mean anything (peak ${line.stats.peakConcurrent})`,
+      `the table was already full when the sweep arrived (peak ${line.stats.peakConcurrent})`,
     );
+
+    assert.equal(abusiveStats.phase, 'done', 'the scan still finishes when the line drops under it');
     assert.ok(line.stats.outages > 0, 'filling the table is what drops the line');
     assert.ok(line.stats.refused > 0, 'the sessions past the limit are turned away');
     assert.ok(
