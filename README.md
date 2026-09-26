@@ -430,6 +430,17 @@ workflow artifact — the evidence outlives the job log that also holds it. And 
 on this hunt: the release workflow calls it on the tag's own commit — six passes, three busy
 CPUs — and publishes nothing until it is green.
 
+The hunt's record is measured, not promised. In the 1.7.6 A/B experiment, thirty loaded passes
+over the hostile-line file on the shipped tag caught the burst precondition's race four times —
+each failure posted with the assertion's own message — while thirty identical passes on
+`main`, where the suspect assertion had been rewritten to read the run's own peak, stayed
+green. The same experiment is honest about the limits: the backoff assertion whose CI flake
+started all this never showed in thirty loaded passes of the tag it shipped in, because a race
+that fails roughly one run in twenty needs a window no affordable hunt provides — it was fixed
+by making the claim measurable, not by hoping to re-catch it. With both flakes fixed, the
+thirty-pass confirmation came back clean twice, and the per-pass table and evidence artifact
+each run leaves behind are the receipt of what was and was not met.
+
 ## Releases
 
 Pushing a `v*` tag publishes a release on its own: the workflow first hunts the tagged commit for
