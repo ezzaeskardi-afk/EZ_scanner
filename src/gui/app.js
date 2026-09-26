@@ -49,7 +49,10 @@ const T = {
     stopped: 'stopped',
   },
   progress: (o) => `${o.phase} · ${o.done}/${o.total} (${o.pct}) · ${o.ok} answered · ${o.failed} no answer · ${o.healthy} clean`,
-  detail: (o) => `${o.phase} · elapsed ${o.elapsed} · in flight ${o.inflight} · backoff ×${o.backoff}${o.msg}`,
+  // Peak sits next to the live factor so the two are read together: one is the last completed
+  // address's value and decays as the line recovers, the other is the sweep's high-water mark —
+  // how far the line actually pushed the scan. `?? 1` keeps pre-1.7.7 snapshots rendering.
+  detail: (o) => `${o.phase} · elapsed ${o.elapsed} · in flight ${o.inflight} · backoff ×${o.backoff} (peak ×${o.peak})${o.msg}`,
   of: (n) => `of ${n}`,
   secs: (s) => `${s}s`,
   mins: (m, s) => `${m}m ${s}s`,
@@ -506,6 +509,7 @@ function renderStats() {
     elapsed: fmtDuration(st.elapsedMs),
     inflight: num(st.inflight),
     backoff: dec(st.backoffFactor ?? 1, 2),
+    peak: dec(st.peakBackoffFactor ?? st.backoffFactor ?? 1, 2),
     msg: st.message ? ` · ${messageLabel(st.message)}` : '',
   });
 

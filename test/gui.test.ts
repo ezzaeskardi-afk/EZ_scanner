@@ -128,6 +128,16 @@ test('scanner phases and probe error kinds are all named in the string table', (
   assert.deepEqual(kinds.filter((k) => !STRINGS.nested.kind?.includes(k)), [], 'unnamed probe error kind');
 });
 
+test('the status line reads the backoff peak next to the live factor', () => {
+  // Pinned on the source on purpose (app.js is not imported anywhere testable): the status
+  // line must keep both numbers side by side — the live factor decays back toward 1 as the
+  // line recovers, so without the sweep's own high-water mark next to it the operator sees
+  // only where the line is NOW, not how far it pushed the scan (the 1.7.6/1.7.7 story).
+  const detail = js.slice(js.indexOf('detail: (o) =>'), js.indexOf('\n', js.indexOf('detail: (o) =>')));
+  assert.match(detail, /backoff ×\$\{o\.backoff\} \(peak ×\$\{o\.peak\}\)/, `status-line template lost the peak: ${detail}`);
+  assert.match(js, /peak: dec\(st\.peakBackoffFactor \?\? st\.backoffFactor \?\? 1, 2\)/, 'the peak must fall back across snapshot ages instead of rendering NaN');
+});
+
 test('rejection reasons from scoring.ts all have a reader', () => {
   const scoring = readFileSync(join(guiDir, '..', 'core', 'scoring.ts'), 'utf8');
   // Every `reasons.push(...)` template must be matched by a branch in reasonLabel().

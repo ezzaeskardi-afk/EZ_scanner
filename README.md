@@ -3,7 +3,7 @@
 **Find clean Cloudflare IPs for SNI-fronted tunnels — with a real GUI and a complete CLI.**
 Clean-IP discovery for Cloudflare fronted tunnels (vless / vmess / trojan / BPB style), with a local GUI, a scriptable CLI, resumable scans and honest diagnostics.
 
-[![tests](https://img.shields.io/badge/tests-227%20passing-brightgreen)](#tests)
+[![tests](https://img.shields.io/badge/tests-228%20passing-brightgreen)](#tests)
 [![node](https://img.shields.io/badge/node-%E2%89%A522.18-blue)](#install)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
@@ -319,7 +319,7 @@ src/
   gui/       build-free UI (plain HTML/CSS/JS, English-only) + vendor/openui
   cli/       command line
 scripts/     maintenance tooling: OpenUI style pruning, and the flake hunt (no build step)
-test/        227 tests: probe against a local TLS server (including every throughput
+test/        228 tests: probe against a local TLS server (including every throughput
              verdict), stop/resume, snapshots, API and security, exports, the OpenUI report,
              the HTML/CSS/JS contract, the CLI run as a user runs it, the line-signature
              measurement that names a preset and the scan that adopts it, the dead-code /
@@ -363,7 +363,7 @@ chart = BarChart(chartLabels, [chartSeries], "grouped", "latency bucket", "Addre
 
 ```bash
 npm run typecheck
-npm test                  # 227 tests: probe engine, gating, pause/resume, snapshots,
+npm test                  # 228 tests: probe engine, gating, pause/resume, snapshots,
                           # exports, HTTP API, OpenUI report, GUI contract, CLI, dead code,
                           # and integration runs against a fake hostile access network
 npm run check:openui-css  # the vendored OpenUI stylesheet is still minimal, complete and correctly pinned
