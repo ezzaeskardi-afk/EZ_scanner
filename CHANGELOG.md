@@ -1,5 +1,52 @@
 # Changelog
 
+## 1.7.8 — 2026-09-26
+
+Two releases in one day, and both are about the machinery rather than the engine: 1.7.7 wired
+the flake hunt into the release path, and this one is what running that path for real taught it.
+Nothing under `src/` changes — every file in the diff is a test, a workflow, or the docs — so a
+1.7.7 install scans exactly as this one does; what changed is how surely the suite's claims hold
+on any machine, at any speed.
+
+### Fixed
+- **The burst test's table-full precondition is set by the harness, not raced.** Whether a
+  20-worker sweep could outrun a 12-slot table depended on the machine's dial speed, not on the
+  scanner — under CPU contention the sweep finished inside the table and the precondition read
+  `peak 9`, flaking 4 of 30 passes in the 1.7.6 A/B hunt and holding the release gate hostage
+  ever since. `startHostileLine` gains `preFill`: idle sessions dialled and held open before the
+  caller arrives, riding the normal connection path so they count in `live` and a drop destroys
+  them like any session. The mutation hunt then pushed it one step further: 10 held of 12 still
+  invited timing in through the "+2 concurrent sessions" it asked of the sweep, so the test now
+  holds **all 12** — the sweep's first session is refused on arrival and drops the line, on any
+  machine at any speed, and the precondition reads purely off the holders. Verified by the
+  counterfactual (no preFill, throttled sweep → red with the precondition message), the control
+  (preFill kept, sweep throttled → green), and a clean 30-pass hunt at load 3.
+
+### CI
+- **A re-publish keeps hand-corrected release notes.** The tag is frozen, so its notes
+  extraction is deterministic — and a published body differing from that extraction is, by
+  definition, a hand-correction made after shipping (1.7.6's was, and every future re-publish
+  would have regressed it). `reset-notes=true` is the explicit override. Assets are rebuilt
+  from the tag and come back byte-identical; proven live on v1.7.6.
+- **A green hunt of a pre-evidence tag is no longer failed by its missing artifact.** The gate
+  hunts the tagged tree, so a dispatch on an older tag runs that tag's own hunt script, which
+  predates the evidence file — `if-no-files-found` is now a warning, and a configured sink that
+  cannot be written says so loudly instead of failing the upload two steps later with no clue.
+- **The nightly hunt runs five passes** — a ~13%-per-pass race (the burst precondition's
+  measured rate) now surfaces within a night or two instead of a third of nights, for +2.5
+  minutes on an idle runner; the Sunday 30-pass heavy net and the six-pass release gate keep
+  their slots, the latter because with both known flakes fixed a red gate finally carries
+  information again.
+
+### Docs
+- The pipeline lessons the re-publish taught (pass the ref through a `workflow_call`, treat a
+  differing body as the correction it is, tolerate trees that predate the instrumentation), the
+  stats-audit verdict table a new stat inherits, and the A/B hunt's measured record — caught
+  four times on the tag, never on fixed `main`, and the flake that never showed in sixty passes
+  fixed by being made measurable instead — are all written down where the next change starts
+  from. The README's claims were re-checked against the code: the CSV is 23 columns, the status
+  line reads the peak next to the live factor, and the examples name versions that exist.
+
 ## 1.7.7 — 2026-09-26
 
 This release is the pipeline learning to watch itself. 1.7.6 shipped the flake hunt; this one

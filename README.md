@@ -4,6 +4,7 @@
 Clean-IP discovery for Cloudflare fronted tunnels (vless / vmess / trojan / BPB style), with a local GUI, a scriptable CLI, resumable scans and honest diagnostics.
 
 [![tests](https://img.shields.io/badge/tests-229%20passing-brightgreen)](#tests)
+[![release](https://img.shields.io/badge/release-1.7.8-blue)](#releases)
 [![node](https://img.shields.io/badge/node-%E2%89%A522.18-blue)](#install)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
