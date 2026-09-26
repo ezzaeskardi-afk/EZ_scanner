@@ -77,25 +77,27 @@ async function waitFor(check: () => boolean, timeoutMs: number): Promise<boolean
 }
 
 test('a burst past the session limit drops the line; a worker budget that fits does not', async () => {
-  // `preFill` sets the table-full precondition deterministically: 10 idle sessions are dialled
-  // and held open by the harness, so any extra caller session MUST trip the limit. The old form
-  // asked the scan's own 20 workers to outrun the table's 12 slots, and whether they managed it
-  // depended on how fast the machine ran the sweep — under CPU contention they dialed slowly
-  // enough to finish inside the table, and the precondition flaked 4 of 30 passes in the 1.7.6
-  // A/B hunt. The scan's dial speed is a property of the machine; the table being full is not.
-  const line = await startHostileLine({ sessionLimit: 12, outageMs: 800, listenAll: true, baseDelayMs: 25, preFill: 10 });
+  // `preFill` sets the table-full precondition deterministically: all 12 slots are dialled and
+  // held open by the harness before the scan dials once, so the sweep's first session is
+  // refused on arrival and drops the line — no matter how fast or slow the machine runs it. The
+  // old form asked the scan's own 20 workers to outrun the table's 12 slots, and whether they
+  // managed it depended on dial speed — under CPU contention they finished inside the table and
+  // the precondition flaked 4 of 30 passes in the 1.7.6 A/B hunt. Even 10 held of 12 would
+  // still have needed two *concurrent* scan sessions to read full, which a throttled sweep
+  // does not owe anyone; the full 12 leave nothing to timing at all.
+  const line = await startHostileLine({ sessionLimit: 12, outageMs: 800, listenAll: true, baseDelayMs: 25, preFill: 12 });
   const targets = Array.from({ length: 24 }, (_, i) => `127.0.0.${i + 1}:${line.port}`);
   try {
     // The shape of scan that makes an operator (or a home ONU) react: as many sessions as
     // the box can hold, no pause between them, no back-off.
     const abusive = newScanner();
-    abusive.configure(config(line.port, { workers: 20, tries: 2, minDelayMs: 0 }));
+    abusive.configure(config(line.port, { workers: 20, tries: 2, minDelayMs: 0, rateLimitPerSec: 15 }));
 
     line.resetStats();
     await abusive.start({ targets, label: 'abusive' });
     const abusiveStats = abusive.getStats();
     // resetStats() snapshots the holders into `live`/`peakConcurrent`, so the precondition is
-    // read as 10 held + 2+ scan sessions — absolute, no longer an assertion about dial speed.
+    // read purely off the 12 held sessions — the sweep's own speed is not part of the claim.
     assert.ok(
       line.stats.peakConcurrent >= 12,
       `the table was already full when the sweep arrived (peak ${line.stats.peakConcurrent})`,
