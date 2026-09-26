@@ -420,7 +420,7 @@ suite was run once in a row (the assertion and its fix are in the 1.7.5 notes).
 top, and then separates what it found instead of just going red — a test that fails in *some* runs
 is a flake (the test, or the thing it measures, has a race in it), while one that fails in *every*
 run is a break, and the two want different fixes. It runs on a schedule in the `Flake hunt`
-workflow — nightly at the cheap floor (three passes, load 2), with a heavy net every Sunday night
+workflow — nightly at the cheap floor (five passes, load 2), with a heavy net every Sunday night
 (thirty passes, load 3) for the races too rare to meet in a single night — and it is one command
 locally, with `--runs 6` for a longer hunt or `--files test/server.test.ts` to point it at one
 suspect file. A failure is posted as an annotation against the commit, along
