@@ -1,5 +1,61 @@
 # Changelog
 
+## 1.7.7 — 2026-09-26
+
+This release is the pipeline learning to watch itself. 1.7.6 shipped the flake hunt; this one
+wires it into the release path — a tag is now hunted on its own commit before anything is
+packaged — and answers the question the 1.7.6 flake exposed: `stats.backoffFactor` was a
+decaying last-address value being read as a whole-run claim. The sweep's real peak is now a
+stat of its own, on screen and in the run's own records, with the decay semantics that caused
+the drift pinned in unit tests.
+
+### Added
+- **`stats.peakBackoffFactor`** — the sweep's high-water mark for the inter-probe backoff,
+  recorded where the delay is actually applied, next to `backoffFactor`, which stays the live,
+  per-address value that decays toward 1 as the line recovers (÷1.3 whenever the failure ratio
+  drops under 0.25). The GUI status line reads both side by side — `backoff ×1.32 (peak ×8.00)`
+  — with the peak falling back across snapshot ages so pre-1.7.7 snapshots still render. A
+  resumed run inherits the saved peak as its floor and can only raise it, while the live factor
+  restarts at 1 with the reset engine: `restore()` used to let the resumed run display the
+  previous run's last-address number, a decay the current sweep never earned.
+- **The release waits on a green flake hunt of the tagged commit.** The release workflow calls
+  `flake.yml` (`workflow_call`) with six passes at load 3 and publishes nothing until it is
+  green. A called workflow gets a fresh workspace, where a bare checkout takes `github.sha` —
+  the commit the caller ran on, not the one it ships — so the hunt takes a `ref` input and the
+  release passes its tag: the commit under the hammer is the commit being shipped, on the tag
+  push and on a dispatched re-publish alike. A red hunt fails the release; the tag is not
+  rewritten — the fix lands on `main` and the next tag carries it.
+- **Every hunt leaves a browsable record.** The per-pass table is written to the job summary
+  row by row as each pass finishes (a job killed mid-hunt still shows the passes it got
+  through), with the verdict beneath it — flakes with their failure ratio, breaks with their
+  certainty, and a green window that says so plainly rather than implying the tests are
+  race-free. Each hunt also uploads `flake-hunt-results.json` as a workflow artifact, even on
+  failure, rewritten after every pass; the evidence outlives the job log that also holds it.
+- **A weekly heavy hunt.** Sunday nights run thirty passes at load 3 — the scale that caught
+  the burst-precondition flake in the 1.7.6 A/B experiment — for races too rare to meet in a
+  single night; the nightly stays the cheap floor (three passes, load 2), and a scheduled run
+  tells itself apart by its cron string.
+
+### Fixed
+- **The reset-churn budget assertion measures what the run did.** `the failure ratio raised
+  the inter-probe delay` read `stats.backoffFactor` after the sweep — the *last* completed
+  address's value, which decays, so a sweep that slowed hard and finished on a string of
+  successes read 4 where it peaked at 8 (measured 8.00 → 4.32). That is the shape that flaked
+  in CI on a docs-only commit after 1.7.6, with an annotation that said `expected: true`. The
+  assertion now reads the peak the scanner itself recorded and its failure message carries the
+  numbers; CI's failing-test grep lifts the TAP `error:` line so the message travels with the
+  annotation.
+
+### Tests
+- 229 tests (+9): the backoff peak round-trip (`scanner.test.ts`), three decay-contract pins
+  (`ratelimit.test.ts` — the step is exactly /1.3 on the record that crosses under 0.25, the
+  floor at 1 is exact, and a ratio between 0.25 and the threshold holds the factor still), the
+  status-line template and fallback (`gui.test.ts`), and four for the hunt's records — pass
+  rows including timeouts, the green verdict, the flake/break table, and the evidence file's
+  write/rewrite/skip paths. Verified by mutation (backoff disabled reads `peak 1, final 1,
+  after 89 resets`) and by running the release gate end to end on v1.7.6: assets came back
+  byte-identical and the re-extracted notes were corrected by hand.
+
 ## 1.7.6 — 2026-09-25
 
 Two answers to the same question — *is this test telling the truth?* — because 1.7.4 shipped one that
