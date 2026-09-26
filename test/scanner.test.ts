@@ -218,6 +218,45 @@ test('a session resumes from its cursor instead of starting over', async () => {
   assert.ok(sessions.some((s) => s.id === snapshot.id));
 });
 
+test('the saved peak backoff survives a resume, and the live factor still resets', async () => {
+  // The 1.7.7 contract in one round-trip: the peak is history, so it rides the snapshot and a
+  // resumed sweep starts from it (and can only raise it); the live factor is *this* run's
+  // state, so it reads 1 on resume — the engine's backoff was reset in start(), and a run
+  // that shows the previous run's decaying number is showing a value it never earned.
+  const scanner = makeScanner();
+  const targets = Array.from({ length: 60 }, () => `127.0.0.1:${edge.port}`);
+  const done = scanner.start({ targets, label: 'peak round-trip' });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await scanner.stop();
+  await done;
+
+  // Forge a peak well above anything this calm fake edge could earn, so the test proves
+  // transport and inheritance rather than racing the real backoff engine.
+  const snapshot = await scanner.loadSnapshot(scanner.sessionId);
+  snapshot.stats.peakBackoffFactor = 6.5;
+  snapshot.stats.backoffFactor = 4.0;
+  await scanner.saveSnapshot();
+
+  const second = new Scanner(dataDir);
+  const running = second.start({ resumeFrom: snapshot });
+  // A beat for restore() to land, then the round-trip is pinned while the sweep still runs.
+  // `makeScanner` runs with adaptiveBackoff off, so nothing here can raise or lower either
+  // number: whatever they read is what restore() decided, deterministically.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.equal(second.getStats().peakBackoffFactor, 6.5, 'the saved peak is inherited as the floor for the new run');
+  assert.equal(second.getStats().backoffFactor, 1, 'the live factor restarts at 1 with the reset engine');
+  assert.equal(second.getState(), 'running');
+  await second.stop();
+  await running;
+
+  // And the resumed run's own snapshot carries both facts forward: the floor it inherited,
+  // and the live value of its own last completed address.
+  const resumed = await second.loadSnapshot(second.sessionId);
+  assert.ok(resumed.stats.peakBackoffFactor >= 6.5, 'the inherited peak survives into the next snapshot');
+  assert.ok(resumed.stats.backoffFactor >= 1, 'and the live value belongs to this run alone');
+});
+
 test('retest refreshes selected results in place', async () => {
   const scanner = makeScanner();
   await scanner.start({ targets: [`127.0.0.1:${edge.port}`], label: 'retest' });

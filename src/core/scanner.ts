@@ -833,6 +833,11 @@ export class Scanner extends Emitter<ScannerEvents> {
       inflight: 0,
       ok: snapshot.results.length,
       failuresByKind: { ...(snapshot.stats?.failuresByKind ?? {}) },
+      // The engine's backoff was reset to 1 for this run, so the live field must read 1 too —
+      // the snapshot's value is the *previous* run's last-address number, and displaying it
+      // would show a decaying value the current sweep never earned. The peak is history, not
+      // live state: it rides the spread above and the resumed run can only raise it.
+      backoffFactor: 1,
     };
     this.bucket.setRate(this.config.rateLimitPerSec);
   }
