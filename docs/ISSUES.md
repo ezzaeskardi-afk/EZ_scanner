@@ -222,3 +222,39 @@ and the writer says loudly when a configured sink fails (`writeResultsFile` logs
 paths) — silent skips and loud failures must be distinguishable three steps later. Generally:
 before adding a hard failure to a workflow, ask which *old refs* it will run against, because
 on dispatch it runs against all of them.
+
+### 4. A test may only read a live field as a claim about the whole run if the field cannot drift
+
+**What happened.** The reset-churn assertion read `stats.backoffFactor` after the sweep — that
+field is the *last completed address's* value and decays (÷1.3 whenever the failure ratio drops
+under 0.25), so a sweep that slowed hard and finished on a run of successes read 4 where it
+peaked at 8. It flaked in CI on a docs-only commit. The same class was hiding in the worker
+budgets: the line's `peakConcurrent` leads the caller by a reap cycle, so a strictly serial
+caller reads 2 there.
+
+**The audit and its verdicts.** The whole suite was then swept for this class — every test
+read of a stateful stats field, judged against the field's meaning in `src/`. The verdicts,
+kept here so the next stat inherits the checklist instead of rediscovering it:
+
+| Field | Nature | Verdict |
+|---|---|---|
+| `done / ok / failed / healthy` | monotonic counters | safe — last read equals the whole run |
+| `backoffFactor` | live, last address, decays | **was the one drifter** — claims now read `peakBackoffFactor`; field doc says what it is |
+| `peakBackoffFactor` | accumulated high-water mark | safe — the whole-run value, recorded where the delay is applied |
+| snapshot round-trip | peak inherits, live must not | `restore()` spreads the snapshot over fresh stats — it pinned `backoffFactor: 1` explicitly |
+| `rate / etaMs / elapsedMs` | windowed | safe in tests — fixtures only, never read from a real run |
+| `phase` | state machine | safe — asserted at terminal states or as a fixed constant |
+| `offline` / `getNetwork()` | edge-flappy | safe — read right after `check()`, via `waitFor` on the edge itself, or collected as events over time |
+| `line.stats.peakConcurrent` (burst) | real table peak | safe as a *whole-run* read — its flake was the precondition racing dial speed (fixed by `preFill`) |
+| `line.stats` counters (`refused / resets / outages / stalls`) | monotonic | safe — read after the sweep |
+| `line.client.peak / opened / live` | accumulated / terminal | safe — counted from `connect` to `destroy`, no reap lag |
+| `backoff.factor` (unit) | live | safe — deterministic record sequences drive it |
+| `watchdog.state.checks / failures` | counters + edge | safe — explicit `check()`/`reset()` control |
+
+**The rule.** Before an assertion reads a stats field, classify it: a *monotonic counter* or
+*accumulated high-water mark* may carry a whole-run claim; a *live/last-sample* value may only
+carry a claim about the state at a synchronised point (terminal, quiesced, or on the event's
+own edge). A whole-run claim about a decaying quantity needs a new accumulated field recorded
+where the quantity is applied — not an out-of-band sampler, whose timing becomes the thing
+under load. And write the field doc at the definition site saying which kind it is: that doc
+is what stopped the next reader from repeating this.
