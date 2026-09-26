@@ -171,3 +171,54 @@ writer is unit-tested (`test/export.test.ts`).
 | #86/#86-like "which IP is best?" | Score (0–100) mixing latency, loss, DPI survival, HTTP validity and throughput + sortable columns |
 | "is it my line or the tool?" | `ezscan doctor` (DNS/TCP/TLS/HTTP/speed checks with hints; the DNS check flags block-page answers and compares the system resolver against DNS-over-HTTPS) and `ezscan selftest` (probes real edges and prints a verdict) |
 | "which preset does my line need?" | `ezscan doctor` measures the line's signature — sessions turned away under a held burst, connections reset with nothing else open, and a large transfer that stops moving — and names the preset for it (see #25, #56, #58, #96). Nothing detected means no operator preset is needed |
+
+---
+
+## Pipeline lessons — for the next workflow change
+
+Each of these was learned by dispatching the change for real, not by reading it. The rule
+stands until a workflow file is touched again; re-read it before editing one.
+
+### 1. A called workflow checks out nothing — pass the ref through
+
+**What happened.** The release gate calls `flake.yml` with `workflow_call` to hunt the tag's
+commit before publishing. A called workflow runs in a **fresh workspace**, and a bare
+`actions/checkout` there takes `github.sha` — the commit the *caller ran on*, not the one the
+caller checked out. On a tag push the two are the same commit, so the bug is invisible; on a
+dispatched re-publish (which runs on `main` while shipping an older tag) the hunt would have
+hammered `main` forever while claiming to guard the tag.
+
+**The rule.** Any `workflow_call` job that must act on a specific ref takes that ref as an
+input and checks it out explicitly (`flake.yml`'s `ref` input, default `github.sha`). A gate
+that cannot name the commit it gates is decoration. Note the corollary: `uses:` resolves the
+called workflow **file** from the caller's commit, so the hunt of an old tag runs that
+*caller's* copy of the hunt script — old tags legitimately lack newer script features (see 3).
+
+### 2. A re-publish must not rewrite hand-corrected release notes
+
+**What happened.** The release workflow extracts notes from the tag's `CHANGELOG.md` —
+deterministic per tag, which is right. But a body corrected *after* publishing (1.7.6's
+"no file under `src/` changes" claim was false and fixed on the release while the frozen tag
+kept the original wording) differed from that extraction, so every re-publish silently
+regressed the public notes back to the wrong claim. Found only because the re-publish path
+was exercised end to end.
+
+**The rule.** On a dispatched re-publish, compare the extraction against the live body
+first: a difference **is** the hand-correction, so it is kept verbatim;
+`reset-notes=true` is the explicit way to say the changelog now supersedes it. Fresh
+publishes (no existing release) always publish the extraction. Assets are rebuilt from the
+tag and are therefore bit-identical across re-publishes — only the body can carry
+post-publish truth.
+
+### 3. Evidence steps must tolerate trees that predate the evidence
+
+**What happened.** The hunt's artifact upload was `if-no-files-found: error`. But the gate
+hunts the *tagged* tree (rule 1), and a tag from before the evidence feature existed produces
+no `flake-hunt-results.json` by design — so a 6-for-6 green hunt of v1.7.6 was failed by its
+bookkeeping. The gate should never be stricter than the thing it guards.
+
+**The rule.** `if-no-files-found: warn` for artifacts produced by optional instrumentation,
+and the writer says loudly when a configured sink fails (`writeResultsFile` logs unwritable
+paths) — silent skips and loud failures must be distinguishable three steps later. Generally:
+before adding a hard failure to a workflow, ask which *old refs* it will run against, because
+on dispatch it runs against all of them.
