@@ -11,6 +11,10 @@ on:
       tag:
         description: Existing tag to (re)publish
         required: true
+      reset-notes:
+        description: 'Overwrite even hand-corrected notes with the tag''s changelog'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -67,6 +71,28 @@ jobs:
         run: |
           npm run --silent notes -- "${TAG#v}" > notes.md
           head -5 notes.md
+      # The tag is frozen, so the notes it extracts are deterministic: on a re-publish of a
+      # release whose body was hand-corrected after publishing (as 1.7.6's was — its "no file
+      # under src/ changes" claim was wrong and fixed on the release and on main, while the tag
+      # still carries the original wording), overwriting would regress the published notes.
+      # A body that differs from the extraction IS the correction, so it is kept verbatim;
+      # `reset-notes` is the explicit way to say the changelog now supersedes it.
+      - name: Preserve hand-corrected notes
+        if: github.event_name == 'workflow_dispatch' && !inputs.reset-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" --json body --jq '.body' > published.md 2>/dev/null; then
+            if ! diff -q published.md notes.md >/dev/null 2>&1; then
+              cp published.md notes.md
+              echo "keeping the published body — it was hand-corrected after this tag shipped"
+              echo "(pass reset-notes=true to overwrite it with the tag's changelog)"
+            else
+              echo "published body matches the tag's changelog; nothing to preserve"
+            fi
+          else
+            echo "no existing release to compare against; publishing the extracted notes"
+          fi
 
       - name: Publish the release
         env:
