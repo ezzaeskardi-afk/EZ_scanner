@@ -75,7 +75,8 @@ to a live console, with a four-tab dock underneath.
 1. **Scan setup** (left rail) — presets, address source and every parameter, grouped into
    collapsible sections (probe, throughput, safety / anti-detection).
 2. **Live console** — progress bar, six **KPIs** (checked, answered, no answer, clean, rate,
-   time left), an operational status line (phase · elapsed · in flight · back-off) and the
+   time left), an operational status line (phase · elapsed · in flight · back-off, read next to
+   the sweep's peak so the line's push and its recovery are both visible) and the
    **failure breakdown** as chips.
 3. **Results** — a live table with sorting (and `aria-sort`), filtering, bulk selection,
    one-click copy, re-probe / re-test speed and "scan only these". The *status* column says
@@ -244,7 +245,7 @@ and swap the address into your own config, which is exactly what "Build configs"
 |---|---|
 | `txt` | `ip:port` per line (v6 addresses bracketed) |
 | `hosts` | addresses only |
-| `csv` | 22 columns with a BOM for Excel, including the rejection reason and the throughput verdicts (`down_trust`, `up_trust`) |
+| `csv` | 23 columns with a BOM for Excel, including the rejection reason, the recovery flag and the throughput verdicts (`down_trust`, `up_trust`) |
 | `xlsx` | a real Excel file with no external library (stored ZIP + CRC32) |
 | `json` / `ndjson` | for scripts and automation |
 | `links` | ready-to-import links: `vless://…@<ip>:443?…#EZ-<ip>-<latency>` |
@@ -449,9 +450,12 @@ since the fix belongs on `main` and the next tag, not in a rewrite of a publishe
 the typecheck, the two gates and the test suite, packages the tracked files as
 `ez-scanner-<version>.zip`, writes `SHA256SUMS.txt`, takes the notes from `CHANGELOG.md` and
 attaches all three. The same notes
-are one command locally (`npm run notes -- 1.3.0`), so what a release says is what the
-changelog says. The zip needs no build step, no dependencies and no toolchain — Node 22.18+
-is the only requirement.
+are one command locally (`npm run notes -- 1.7.7`), so what a release says is what the
+changelog says. Re-publishing an existing tag keeps its published body when it differs from the
+tag's own extraction — a difference is a hand-correction made after shipping, and the tag is
+frozen (`reset-notes=true` says the changelog now supersedes it); the assets are rebuilt from
+the tag and come back byte-identical. The zip needs no build step, no dependencies and no
+toolchain — Node 22.18+ is the only requirement.
 
 ## Credits
 
