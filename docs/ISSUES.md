@@ -258,3 +258,21 @@ own edge). A whole-run claim about a decaying quantity needs a new accumulated f
 where the quantity is applied — not an out-of-band sampler, whose timing becomes the thing
 under load. And write the field doc at the definition site saying which kind it is: that doc
 is what stopped the next reader from repeating this.
+
+### 5. A gate and the tool that satisfies it share one table
+
+**What happened.** The version lived in four files and was bumped by hand in all of them,
+while the gate (`test/version.test.ts`) pinned the three `src/` literals with its own private
+patterns. `scripts/bump-version.ts` was built by extracting that table (`VERSION_PLACES`) and
+having both the gate and the bump import it — because two spellings of the same fact drift
+apart at the first refactor, and the loser is whichever runs second. The same pass surfaced a
+second coupling: the notes gate (`test/release-notes.test.ts`) asserts the package version has
+CHANGELOG notes, so a bump that rewrites only the four literals fails a gate that looks
+unrelated — the bump opens the section itself.
+
+**The rule.** When a check and the change that must satisfy it stay in step, the check owns
+the table and the change imports it — never two copies of the same patterns. Pin named lists
+verbatim (the gate asserts the exact four files, not just a count of four): a dropped entry is
+a place the tool silently stops touching, and a count alone lets a rename shift which files
+are covered. And before wiring a tool around a value, search for every gate that reads it —
+the coupled gate is rarely the obvious one.

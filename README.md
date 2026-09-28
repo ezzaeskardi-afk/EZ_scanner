@@ -450,7 +450,10 @@ flakes (six passes of the integration suite under CPU contention — a red hunt 
 since the fix belongs on `main` and the next tag, not in a rewrite of a published one), then runs
 the typecheck, the two gates and the test suite, packages the tracked files as
 `ez-scanner-<version>.zip`, writes `SHA256SUMS.txt`, takes the notes from `CHANGELOG.md` and
-attaches all three. The same notes
+attaches all three. The four-place version bump — package.json, the CLI banner, the GUI server
+and the OpenUI report default — is one command too: `npm run bump -- <version | patch | minor | major>`
+rewrites all four, opens the CHANGELOG section the notes gate requires, runs the version gate and
+lands the whole thing in a single commit (`--dry-run` previews it without writing). The same notes
 are one command locally (`npm run notes -- 1.7.7`), so what a release says is what the
 changelog says. Re-publishing an existing tag keeps its published body when it differs from the
 tag's own extraction — a difference is a hand-correction made after shipping, and the tag is

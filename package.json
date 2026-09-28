@@ -46,6 +46,7 @@
     "check:flake": "node scripts/flake-hunt.ts",
     "prune:openui": "node scripts/prune-openui-css.ts",
     "notes": "node scripts/release-notes.ts",
+    "bump": "node scripts/bump-version.ts",
     "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
