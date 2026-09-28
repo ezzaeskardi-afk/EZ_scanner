@@ -33,6 +33,7 @@ import https from 'node:https';
 import type { AddressInfo, Socket } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import tls from 'node:tls';
+import { mulberry32 } from '../../src/core/ipsrc.ts';
 import { watchClientSockets, type ClientSockets } from './client-sockets.ts';
 
 export interface HostileLineOptions {
@@ -60,6 +61,16 @@ export interface HostileLineOptions {
   maxNewSessionsPerSec?: number;
   /** Share of accepted sessions reset immediately (a real RST), as a DPI/NAT box does. */
   resetRate?: number;
+  /**
+   * Seed for the line's own dice (reset draws, response jitter), driven by the same
+   * `mulberry32` PRNG the scanner uses. The line used to draw from `Math.random()`, which
+   * re-rolled every test's outcome per CI run: whether an address survived the reset churn
+   * was a lottery the preset assertions had a share of (Windows CI 2026-09-28 read 35/40
+   * against a 36 floor, with three sibling platforms green on the same commit). Seeded by
+   * default, so a test's verdict is reproducible from the seed alone; pass a different one
+   * when a test wants a different draw.
+   */
+  seed?: number;
   /** Fixed delay added to every response. */
   baseDelayMs?: number;
   /** Extra random delay (0..jitterMs) added to every response. */
@@ -143,6 +154,8 @@ export function startHostileLine(opts: HostileLineOptions): Promise<HostileLine>
   let deadUntil = 0;
   /** Timestamps of the sessions opened in the last second, for the rate cap. */
   let openedAt: number[] = [];
+  /** The line's own dice — seeded (see `seed`), so a test's verdict is reproducible. */
+  const lineRand = mulberry32(opts.seed ?? 0x1157);
 
   /**
    * A reset, not a polite FIN. `resetAndDestroy` is what makes the client see
@@ -183,7 +196,7 @@ export function startHostileLine(opts: HostileLineOptions): Promise<HostileLine>
 
   const server = https.createServer({ key, cert }, (req, res) => {
     stats.requests += 1;
-    const delay = (opts.baseDelayMs ?? 0) + (opts.jitterMs ? Math.random() * opts.jitterMs : 0);
+    const delay = (opts.baseDelayMs ?? 0) + (opts.jitterMs ? lineRand() * opts.jitterMs : 0);
     const url = new URL(req.url ?? '/', 'https://hostile.line');
 
     const respond = (): void => {
@@ -259,7 +272,7 @@ export function startHostileLine(opts: HostileLineOptions): Promise<HostileLine>
     }
     // A share of sessions killed outright — the DPI/NAT reset a mobile line lives with.
     // It has to happen on the raw socket: a TLSSocket's handle cannot be sent as a RST.
-    if (opts.resetRate && Math.random() < opts.resetRate) {
+    if (opts.resetRate && lineRand() < opts.resetRate) {
       stats.resets += 1;
       reset(raw);
       return;
