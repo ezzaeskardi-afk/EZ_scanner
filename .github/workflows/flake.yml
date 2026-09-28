@@ -58,6 +58,9 @@ on:
 
 permissions:
   contents: read
+  # The reporter's only write: opening/commenting/closing the red-hunt thread. The hunt
+  # itself needs nothing beyond reading the checkout.
+  issues: write
 
 jobs:
   hunt:
@@ -69,13 +72,13 @@ jobs:
     # machine and wrong on a runner — there a starved pass reads as a timeout rather than a flake.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Inside a called workflow this job gets a *fresh* workspace, and a bare checkout takes
           # `github.sha` — the ref the caller RAN on, not the one it checked out. A release passes
           # its tag here explicitly, so the commit under the hammer is the commit being shipped.
           ref: ${{ inputs.ref || github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '24'
       - run: npm install --no-audit --no-fund
@@ -94,6 +97,34 @@ jobs:
           if [ -n "$FILES" ]; then args+=(--files "$FILES"); fi
           if [ -n "$LOAD" ]; then args+=(--load "$LOAD"); fi
           node scripts/flake-hunt.ts "${args[@]}"
+      # A scheduled hunt runs unattended; a red exit code nobody sees at 03:17 is only half a
+      # report. One thread per red period: the first red hunt opens "Flake hunt went red" with
+      # the hunt's own summary (per-pass table + verdict) and the run/artifact links, every
+      # later red hunt comments on it, and the first green hunt closes it. Driven by the hunt
+      # step's outcome, not re-derived; scheduled hunts report, manual dispatches and the
+      # release gate stay silent (the gate's red already blocks the release, and a dispatcher
+      # is watching). Failing bookkeeping never flips the workflow — the hunt's own annotation
+      # carries the failure. Old tags predating the summary produce no copy; the issue still
+      # opens, with a note that the summary lives on the run page.
+      - name: Keep the summary for the issue
+        if: always()
+        shell: bash
+        run: cp "${GITHUB_STEP_SUMMARY}" ./flake-hunt-summary.md
+      - name: Open or update the red-hunt issue
+        if: failure() && github.event_name == 'schedule'
+        env:
+          HUNT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          HUNT_SHA: ${{ github.sha }}
+          HUNT_SUMMARY: ${{ github.workspace }}/flake-hunt-summary.md
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/report-red-hunt.ts open
+      - name: Close the red-hunt issue
+        if: success() && github.event_name == 'schedule'
+        env:
+          HUNT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          HUNT_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/report-red-hunt.ts close
       # The evidence outlives the job log: every pass as measured, plus the verdict once the
       # hunt can make one. Uploaded even on failure — a red hunt is exactly the one whose file
       # is worth keeping. The release gate hunts the TAGGED tree (that is the point of it), and
@@ -101,7 +132,7 @@ jobs:
       # warn, not a failure: the hunt of an old tag is none the less green for it.
       - name: Keep the evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: flake-hunt-results
           path: flake-hunt-results.json
