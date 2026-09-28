@@ -276,3 +276,28 @@ verbatim (the gate asserts the exact four files, not just a count of four): a dr
 a place the tool silently stops touching, and a count alone lets a rename shift which files
 are covered. And before wiring a tool around a value, search for every gate that reads it —
 the coupled gate is rarely the obvious one.
+
+### 6. A precondition the subject can win is a race — the harness sets the state, the machine under test never does
+
+**What happened.** The burst test needed the hostile line's session table (12 slots) full
+before the sweep arrived, and it got there by asking the scan's own 20 workers to fill it.
+That is the setup racing the system under test for a shared resource: on a fast runner the
+sweep won and the precondition held; under the hunt's CPU contention the same sweep dialled
+slower, finished *inside* the table, and the test read "no burst" — 4 of 30 loaded passes in
+the 1.7.6 A/B hunt red with nothing wrong in the code. The fix (`preFill` in
+`test/helpers/hostile-line.ts`) moved the precondition out of the race entirely: the harness
+dials and holds all 12 slots open *before* the scan starts, so the sweep's first session is
+refused on arrival no matter how fast or slow the machine runs it. Nothing is left to outrun.
+Verified both ways: a throttled scan without `preFill` still goes red under load (the
+mutation that proved the assertion can fail), and with `preFill` the 30-pass A/B went
+4 failures → 0 (the record lives in the README's flake-hunt section).
+
+**The rule.** For every precondition a test asserts, ask who establishes it: the *harness*
+(deterministic) or the *subject* (timing). If the setup wins a resource by doing something
+faster than the system under test — occupying a table, grabbing a slot, taking a lock,
+filling a queue — the test measures machine speed and only names the behavior. Establish the
+state yourself first: dial the sessions and hold them, take the lock, enqueue the work, then
+let the subject act on a world that is already set. The shape of the fix is always the same:
+move setup from *faster than* to *before*. This is the establishing-side twin of lesson 4 —
+that one governs claims about state the run changes, this one governs the state the run
+is handed.

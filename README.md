@@ -428,7 +428,12 @@ locally, with `--runs 6` for a longer hunt or `--files test/server.test.ts` to p
 suspect file. A failure is posted as an annotation against the commit, along
 with the assertion's own message, so finding out which claim flaked does not depend on reading a
 job log through the API, and every hunt uploads its per-pass results as the `flake-hunt-results`
-workflow artifact — the evidence outlives the job log that also holds it. And a race must not reach a published artifact, so every release waits
+workflow artifact — the evidence outlives the job log that also holds it. A scheduled hunt that
+goes red is not left to the logs either: the workflow opens a **Flake hunt went red** issue with
+the hunt's own per-pass table and verdict plus the run and artifact links, every later red hunt
+comments on the same thread, and the first green hunt closes it — one thread per red period,
+found by title, no state stored. Manual dispatches and the release gate stay silent (a dispatcher
+is watching; a red gate already blocks the release). And a race must not reach a published artifact, so every release waits
 on this hunt: the release workflow calls it on the tag's own commit — six passes, three busy
 CPUs — and publishes nothing until it is green.
 
