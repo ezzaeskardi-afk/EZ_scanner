@@ -132,7 +132,7 @@ jobs:
       # warn, not a failure: the hunt of an old tag is none the less green for it.
       - name: Keep the evidence
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: flake-hunt-results
           path: flake-hunt-results.json
