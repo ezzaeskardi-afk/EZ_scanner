@@ -61,6 +61,15 @@ export function isParsedConfig(value: ParsedConfig | ParseFailure): value is Par
   return !('error' in value);
 }
 
+/**
+ * A port that survived JSON is only a port when it is a whole one in range — `"abc"`, 0
+ * and 1e9 all used to become `NaN`/junk on the ParsedConfig and ride into the scanner as
+ * a live row. Junk falls back to the scheme default; the property tests fuzz this.
+ */
+function sanePort(value: number, fallback: number): number {
+  return Number.isInteger(value) && value >= 1 && value <= 65535 ? value : fallback;
+}
+
 /** Parses any supported share link. Returns `{ error }` when it cannot. */
 export function parseShareLink(input: string): ParsedConfig | ParseFailure {
   const raw = input.trim();
@@ -103,7 +112,11 @@ function parseUrlStyle(raw: string, scheme: string): ParsedConfig | ParseFailure
   return {
     protocol: scheme === 'hy2' ? 'hysteria2' : scheme,
     address: url.hostname.replace(/^\[|\]$/g, ''),
-    port: url.port ? Number(url.port) : defaultPort(scheme, security),
+    port: url.port
+      ? // WHATWG URL allows port 0 on non-special schemes; a port-0 target is junk, so it
+        // falls back to the scheme default like every other impossible port.
+        sanePort(Number(url.port), defaultPort(scheme, security))
+      : defaultPort(scheme, security),
     sni: sni || url.hostname,
     hostHeader: params.get('host') ?? '',
     path: params.get('path') ?? '/',
@@ -129,7 +142,7 @@ function parseVmess(raw: string): ParsedConfig | ParseFailure {
   return {
     protocol: 'vmess',
     address,
-    port: Number(json.port ?? 443),
+    port: sanePort(Number(json.port ?? 443), 443),
     sni: String(json.sni ?? json.host ?? address),
     hostHeader: String(json.host ?? ''),
     path: String(json.path ?? '/'),
@@ -157,10 +170,14 @@ function parseShadowsocks(raw: string): ParsedConfig | ParseFailure {
   // `2606` and port `4700` — a silently wrong target, on the family half this tool's ranges use.
   const m = decoded.match(/^([^@]+)@(\[[^\]]+\]|[^:]+):(\d+)/);
   if (!m) return { error: 'unrecognised shadowsocks link' };
+  // The regex only guarantees digits: a 6-digit port is a malformed link, rejected with a
+  // reason rather than emitted as an out-of-range port.
+  const port = Number(m[3]);
+  if (port < 1 || port > 65535) return { error: 'unrecognised shadowsocks link' };
   return {
     protocol: 'ss',
     address: m[2].replace(/^\[|\]$/g, ''),
-    port: Number(m[3]),
+    port,
     sni: m[2],
     hostHeader: '',
     path: '',
@@ -181,9 +198,14 @@ export function parseXrayJson(text: string): ParsedConfig[] {
     return [];
   }
   const out: ParsedConfig[] = [];
-  const obj = doc as Record<string, unknown>;
+  // `null`, numbers and bare strings are all *valid* JSON — `JSON.parse("null")` used to
+  // walk into `obj.outbounds` on a null doc and throw. Anything but an object yields no
+  // outbounds, which the caller already reads as "no configs found".
+  const obj = (doc && typeof doc === 'object' ? doc : {}) as Record<string, unknown>;
   const outbounds = Array.isArray(obj.outbounds) ? (obj.outbounds as Record<string, unknown>[]) : [];
   for (const ob of outbounds) {
+    // A JSON array can carry `null` members; reading `streamSettings` off one used to throw.
+    if (!ob || typeof ob !== 'object') continue;
     const stream = (ob.streamSettings ?? {}) as Record<string, unknown>;
     let server = '';
     let port = 443;
@@ -195,10 +217,10 @@ export function parseXrayJson(text: string): ParsedConfig[] {
     const servers = Array.isArray(settings?.servers) ? (settings?.servers as Record<string, unknown>[]) : [];
     if (vnext.length) {
       server = String(vnext[0].address ?? '');
-      port = Number(vnext[0].port ?? 443);
+      port = sanePort(Number(vnext[0].port ?? 443), 443);
     } else if (servers.length) {
       server = String(servers[0].address ?? '');
-      port = Number(servers[0].port ?? 8388);
+      port = sanePort(Number(servers[0].port ?? 8388), 8388);
     }
     if (!server) continue;
     const tlsSettings = stream.tlsSettings as Record<string, unknown> | undefined;
