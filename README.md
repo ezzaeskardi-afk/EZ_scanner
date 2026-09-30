@@ -437,7 +437,12 @@ workflow artifact — the evidence outlives the job log that also holds it. A sc
 goes red is not left to the logs either: the workflow opens a **Flake hunt went red** issue with
 the hunt's own per-pass table and verdict plus the run and artifact links, every later red hunt
 comments on the same thread, and the first green hunt closes it — one thread per red period,
-found by title, no state stored. Manual dispatches and the release gate stay silent (a dispatcher
+found by title, no state stored. The cycle is proven end to end, not just unit-tested: a
+controlled drill on a disposable branch (the reporter temporarily armed for dispatch, one
+deliberately broken test) ran the real thing — run 36784175628 went red and the live issue #1
+opened carrying the table, verdict and links; the fix's run 36784317869 went green and closed
+it with its own comment — and the thread and branch were deleted, main never carrying the drill.
+Manual dispatches and the release gate stay silent (a dispatcher
 is watching; a red gate already blocks the release). The week's hunts add up to one page too:
 `npm run hunt-receipt` reads the trailing 7 days of scheduled hunts and prints the ledger —
 greens as a table of passes and commits, every red with its verdict table, artifact link and
