@@ -441,7 +441,9 @@ found by title, no state stored. Manual dispatches and the release gate stay sil
 is watching; a red gate already blocks the release). The week's hunts add up to one page too:
 `npm run hunt-receipt` reads the trailing 7 days of scheduled hunts and prints the ledger —
 greens as a table of passes and commits, every red with its verdict table, artifact link and
-issue thread — so "what did the net see this week?" is one command, not seven log readings. And a race must not reach a published artifact, so every release waits
+issue thread — so "what did the net see this week?" is one command, not seven log readings.
+
+And a race must not reach a published artifact, so every release waits
 on this hunt: the release workflow calls it on the tag's own commit — six passes, three busy
 CPUs — and publishes nothing until it is green.
 
@@ -454,7 +456,12 @@ started all this never showed in thirty loaded passes of the tag it shipped in, 
 that fails roughly one run in twenty needs a window no affordable hunt provides — it was fixed
 by making the claim measurable, not by hoping to re-catch it. With both flakes fixed, the
 thirty-pass confirmation came back clean twice, and the per-pass table and evidence artifact
-each run leaves behind are the receipt of what was and was not met.
+each run leaves behind are the receipt of what was and was not met. The record has kept growing
+on its own schedule since: the heavy net's first scheduled firing (2026-09-27, on the 1.7.8 tag's
+commit, the full five-file integration set under load 3) came back 30 for 30 — 2266.6 seconds of
+loaded scanning, a 75.6-second mean per pass, zero flakes and zero timeouts in the verdict, the
+`flake-hunt-results` artifact attached — and every later Sunday appends another row, one
+`npm run hunt-receipt` away from being read.
 
 ## Releases
 
