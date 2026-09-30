@@ -442,6 +442,9 @@ controlled drill on a disposable branch (the reporter temporarily armed for disp
 deliberately broken test) ran the real thing — run 36784175628 went red and the live issue #1
 opened carrying the table, verdict and links; the fix's run 36784317869 went green and closed
 it with its own comment — and the thread and branch were deleted, main never carrying the drill.
+The comment leg got its own drill: a second red (run 36791390219) landed **one** comment on the
+same still-open thread instead of opening another, and the green run 36791503473 closed it —
+one thread per red period, measured with the real API, not asserted in a mock.
 Manual dispatches and the release gate stay silent (a dispatcher
 is watching; a red gate already blocks the release). The week's hunts add up to one page too:
 `npm run hunt-receipt` reads the trailing 7 days of scheduled hunts and prints the ledger —
