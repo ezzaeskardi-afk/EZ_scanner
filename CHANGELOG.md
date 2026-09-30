@@ -1,5 +1,58 @@
 # Changelog
 
+## 1.8.0 — 2026-09-30
+
+This one is the release machinery eating its own dog food: the broken first tag push that 1.7.9
+suffered became a preflight gate, the week's hunts became one command each, and the fuzzer
+reached the GUI's front door — where the safety net held. The first cut of this very release
+tripped the version gate, because the marker contract preflight introduced claimed more than
+the bump's working tree allows — and that is the system working: the tooling built to catch
+broken releases caught its own, before any tag existed.
+
+### Added
+- **Preflight: the pre-tag checklist is one command.** `npm run preflight -- <version>` runs the
+  whole readiness list in one pass and reports every finding, not just the first: the four
+  version literals agree (the shared table), the changelog carries a real note (the bump's
+  placeholder is told apart by its `STUB_MARKER`, a contract both tools and the version gate
+  pin), the working tree is clean, and no tag for the version exists in either spelling. The
+  broken-release shapes the 1.7.9 tag push found now stop at the pre-tag check.
+- **The week's hunts add up to one page.** `npm run hunt-receipt` reads the trailing days of
+  scheduled hunts and prints the ledger — greens as a table of shape and commit, every red with
+  its verdict table, artifact link and issue thread. Sunday's heavy hunt prints its own receipt
+  too (`npm run heavy-receipt`): the newest long run is found by duration (the schedule queue
+  delays starts, so the clock lies), its artifact is read, and the record's next sentence comes
+  out ready-made — exiting non-zero on a red so the receipt doubles as the triage sheet.
+
+### Tests
+- **The property fuzz reaches the config sanitizer.** `junkConfigPatch` puts right keys in wrong
+  worlds — wrong types, wrong ranges, stringy numbers, `1e999`, NaN-as-null — straight into
+  `sanitizeConfig`, which is what the GUI's config endpoint feeds it, and `ADVERSARIAL` rides
+  along as mode/sni/speedUrl. Three properties hold: every hostile patch lands as a usable
+  config, legal values pass through exactly (below the burst-profile threshold, whose advisory
+  is intended), and `normalizeSni` answers every string lowercase, port-less and scheme-less.
+  Unlike the parsers' round, this one found no new breaks — the net was already as mean as its
+  callers, and now that is measured, not assumed.
+
+### Fixed
+- **The stub marker belongs to preflight, not to the bump's working tree.** The version gate
+  asserted the shipped changelog never carries `STUB_MARKER` — but the bump legitimately puts
+  it there, and only preflight insists it is gone; the first cut of this release tripped its
+  own gate and the shipped-tree half of the claim moved where it is true.
+
+### Docs
+- **The A/B record grew a second receipt.** The heavy net's first scheduled firing (2026-09-27,
+  on the 1.7.8 tag's commit, the full five-file integration set under load 3) came back 30 for
+  30 — 2266.6 seconds of loaded scanning, a 75.6-second mean per pass, zero flakes and zero
+  timeouts — read from the run's own artifact, not from memory.
+- **The lesson-6 audit swept the suite.** Every precondition got named: who establishes it, the
+  harness or the timing. No live race was found, and two comments that hid the math were made
+  honest — the recovery-pass block lands mid-sweep because the per-second cap floors the sweep,
+  and the browser-failure wait is an observation window with the harness owning both sides.
+- **The red-hunt reporter passed a live drill.** On a disposable branch with the reporter
+  temporarily armed for dispatch, a deliberately broken test opened a real "Flake hunt went
+  red" issue — table, verdict, run link and all — and the fix's green hunt closed it with its
+  own comment; the thread and branch were deleted, and main never carried the drill.
+
 ## 1.7.9 — 2026-09-30
 
 This one is the release machinery using itself: the version bump that 1.7.7's gate kept catching
