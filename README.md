@@ -415,6 +415,11 @@ JS-only hooks.
 If any of that rots, **CI goes red** — all checks run on the Windows/Linux × Node 22.18/24
 matrix.
 
+The Linux runner is pinned to `ubuntu-26.04` (as is the flake hunt and the release publish job)
+ahead of GitHub's `ubuntu-latest` migration to Ubuntu 26, which begins 2026-10-19 — both
+workflows were dispatched on the new label first and came back green, so the migration lands as
+a non-event instead of a red CI morning.
+
 The suite is also run **on a schedule, against a loaded machine**, because a race passes one quiet
 pass by construction: 1.7.4 shipped a test that failed on a runner while passing everywhere the
 suite was run once in a row (the assertion and its fix are in the 1.7.5 notes).
