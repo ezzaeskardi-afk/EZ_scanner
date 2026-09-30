@@ -11,8 +11,10 @@
  *     window has passed, with a fresh record.
  *
  * The second run of each pair is the control: same line, same addresses, one mechanism switched
- * off. On the block test the numbers are stark (a 3 s block over a 4 s sweep): most addresses are
- * probed inside it, so without the recovery pass they are gone until the next scan.
+ * off. On the block test the numbers are stark: the per-second cap floors the sweep at ~10 s
+ * (40 addresses × 3 tries at 12/s), so a 3 s block starting at 1 s catches roughly a third of
+ * the sweep — and, without the recovery pass, those addresses are gone until the next scan.
+ * The cap, not hope, is what guarantees the block lands mid-sweep under load.
  */
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';

@@ -133,6 +133,9 @@ test('a machine without a browser helper does not take the CLI down', async () =
   // after it printed the URL — the server was up, and the process was gone. A headless Linux box
   // has no xdg-open, which is exactly where the GUI is most useful (a remote machine).
   openBrowser('http://127.0.0.1:1/?token=x', { command: 'definitely-not-a-real-browser-helper', args: ['http://127.0.0.1:1/'] });
+  // This wait is an *observation window*, not a precondition: the harness owns both sides
+  // (the spawn and its contained error), so nothing here is racing the subject. The window
+  // only makes a broken containment likely to blow up inside this test instead of after it.
   await new Promise((resolve) => setTimeout(resolve, 300));
   assert.ok(true, 'reaching this line means the spawn failure was contained');
 });
