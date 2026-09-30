@@ -240,21 +240,37 @@ function fetchJson(gh: Gh, args: string[], what: string): unknown {
   }
 }
 
-/** The week's hunts and threads, straight from the API. */
+/**
+ * The week's hunts and threads, straight from the API — via `--jq` so only the fields the
+ * receipt reads ever cross the pipe. The full run objects are ~5KB each and the repo's run
+ * count grows forever; a bare fetch died mid-transfer once the list got fat enough.
+ */
 export function fetchWeek(gh: Gh, since: Date): { hunts: ScheduledHunt[]; threads: RedThread[] } {
   const hunts = fetchJson(
     gh,
-    ['api', `repos/${OWNER}/${REPO}/actions/runs?created=%3E%3D${ISO(since)}&per_page=100`],
+    [
+      'api',
+      `repos/${OWNER}/${REPO}/actions/runs?created=%3E%3D${ISO(since)}&per_page=100`,
+      '--jq',
+      '[.workflow_runs[] | {id, created_at, name, event, conclusion, display_title, head_sha, updated_at}]',
+    ],
     'the workflow runs',
   ) as { workflow_runs?: Array<Record<string, unknown>> };
   const threads = fetchJson(
     gh,
-    ['api', `repos/${OWNER}/${REPO}/issues?state=all&sort=created&direction=desc&per_page=30`],
+    [
+      'api',
+      `repos/${OWNER}/${REPO}/issues?state=all&sort=created&direction=desc&per_page=30`,
+      '--jq',
+      '[.[] | select(.title == "Flake hunt went red") | {number, created_at, closed_at, body}]',
+    ],
     'the issue threads',
   ) as Array<Record<string, unknown>>;
 
   return {
-    hunts: (hunts.workflow_runs ?? []).map((run) => ({
+    // The `--jq` above already reshaped both sides: an array of slim run objects and an
+    // array of slim thread objects — `fetchWeek` maps over arrays, not envelopes.
+    hunts: (Array.isArray(hunts) ? hunts : ((hunts as { workflow_runs?: Array<Record<string, unknown>> }).workflow_runs ?? [])).map((run) => ({
       databaseId: run.id as number,
       createdAt: run.created_at as string,
       workflowName: run.name as string,
@@ -264,14 +280,12 @@ export function fetchWeek(gh: Gh, since: Date): { hunts: ScheduledHunt[]; thread
       updatedAt: (run.updated_at as string) ?? '',
       event: (run.event as string) ?? '',
     })),
-    threads: (threads ?? [])
-      .filter((issue) => issue.title === RED_TITLE)
-      .map((issue) => ({
-        number: issue.number as number,
-        createdAt: issue.created_at as string,
-        closedAt: (issue.closed_at as string | null) ?? null,
-        body: (issue.body as string) ?? '',
-      })),
+    threads: (threads ?? []).map((issue) => ({
+      number: issue.number as number,
+      createdAt: issue.created_at as string,
+      closedAt: (issue.closed_at as string | null) ?? null,
+      body: (issue.body as string) ?? '',
+    })),
   };
 }
 
