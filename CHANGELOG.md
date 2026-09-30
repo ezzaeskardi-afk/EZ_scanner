@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.7.9 — 2026-09-30
+
+This one is the release machinery using itself: the version bump that 1.7.7's gate kept catching
+by hand became one command, the parsers had their claims fuzzed for the first time — and the
+fuzzer earned its keep on the first window — the flake hunt learned to open its own issue when a
+scheduled night goes red, and the CI's runtime floor moved off Node 20 before GitHub's deprecation
+banner turned it into an outage. Nothing in `src/` changes behavior on any input a user types on
+purpose; what changed is how surely the junk inputs bounce, and how little of the release is hands.
+
+### Added
+- **The four-place version bump is one command.** `npm run bump -- <version | patch | minor | major>`
+  rewrites every version literal — package.json, the CLI banner, the GUI server and the OpenUI
+  report default — from one shared table, opens the `## <version>` section the notes gate requires,
+  runs the version gate and lands the whole thing as a single commit, refusing a dirty tree and a
+  non-increasing version. The gate reads the same table the bump writes, so a literal that moves is
+  fixed once and the tool and its gate move together (`--dry-run` for a look without the commit).
+- **Property tests fuzz the parsers' front door.** Seeded generators on the scanner's own
+  `mulberry32` produce garbage strings, scheme-soup links, junk JSON, random IPs and CIDRs and a
+  curated adversarial list, and the properties hold for all of them: every input gets a value or a
+  reason and never an exception, every emitted port is a whole number in range, the corpus survives
+  a rewrite round-trip. CI replays the exact corpus (`FUZZ_SEED`, `FUZZ_ITERATIONS` to turn the dial).
+- **A red scheduled hunt opens its own issue.** A nightly or Sunday hunt that goes red opens a
+  **Flake hunt went red** issue with the hunt's own per-pass table and verdict plus the run and
+  artifact links; every later red night comments on the same thread, and the first green night
+  closes it — one thread per red period, found by title, no state stored, and a hand-closed thread
+  is never reopened (the next red gets a fresh one). Manual dispatches and the release gate stay
+  silent: a dispatcher is watching, and a red gate already blocks the release.
+
+### Fixed
+- **Four parser breaks the fuzzer caught on its first windows.** A JSON `"null"` document and null
+  outbound members used to throw instead of reading as "no configs found"; junk and out-of-range
+  JSON ports (`"abc"`, `0`, `1e9`) rode into the scanner as `NaN` on a live row; and WHATWG URL
+  lets a port-0 target through on non-special schemes, so a `vless://host:0` resolved to port 0.
+  All four now fall back to the scheme default or reject with a reason, like every other
+  impossible input — and a six-digit shadowsocks port is a malformed link, not a port.
+- **The hostile line's dice are seeded.** The CI flake that held 1.7.9 back was the tooling's own
+  `Math.random()`: the Windows/node22 leg drew an operator profile needing 36 pre-filled sessions
+  and got 35, while three sibling platforms on the same commit stayed green — a preset's pass was
+  being re-rolled per run. The line's reset-churn and jitter draws now come from a seeded PRNG,
+  so a preset passes or fails for a reason; re-rolls are gone.
+
+### CI
+- **The GitHub Actions runtimes moved to Node 24 ahead of the deprecation.** checkout/setup-node
+  v4 → v5 and upload-artifact v4 → **v6** — the discovery of this cycle being that v5 still
+  declares `using: node20` and its node24 major is v6. Nine `uses:` across the three workflows,
+  verified live: the deprecation banner is gone from the logs and the annotations are empty.
+- **The Linux runner is pinned to `ubuntu-26.04` ahead of the label migration.** GitHub moves
+  `ubuntu-latest` to Ubuntu 26 starting 2026-10-19; both workflows were dispatched on the new
+  label first and came back green (nothing in the scanner touches a system package), so the pin —
+  including the release publish job — lands as a non-event instead of a red CI morning.
+
 ## 1.7.8 — 2026-09-26
 
 Two releases in one day, and both are about the machinery rather than the engine: 1.7.7 wired
