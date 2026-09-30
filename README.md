@@ -478,7 +478,15 @@ tag, one command checks the whole readiness list at once — `npm run preflight 
 the four version literals agree, the changelog carries a real note (the bump's placeholder is
 recognized by its machine marker and refused), the working tree is clean, and no tag for the
 version exists yet — so the broken-release shapes the 1.7.9 tag push found are caught at
-the pre-tag check instead. The same notes
+the pre-tag check instead. Two of those shapes are worth naming, because both were invisible to
+CI: a called workflow is parsed under the *caller's* grants, so the v1.7.9 tag push died at
+startup before any job — `flake.yml`'s reporter asked for `issues: write` and the release only
+granted `contents:` — and the fix (granting it in `release.yml`, lesson 7) is exactly the kind
+of change a later edit could silently undo, which is why the workflow contracts are now pinned
+in `npm test`. The other was the placeholder itself: the bump opens a CHANGELOG section good
+enough to pass the notes gate, so a tag pushed before the real note lands ships a placeholder
+to the world — preflight's machine marker is what refuses it, at the only moment that matters,
+before the tag exists. The same notes
 are one command locally (`npm run notes -- 1.7.7`), so what a release says is what the
 changelog says. Re-publishing an existing tag keeps its published body when it differs from the
 tag's own extraction — a difference is a hand-correction made after shipping, and the tag is
