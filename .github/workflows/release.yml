@@ -18,6 +18,12 @@ on:
 
 permissions:
   contents: write
+  # The called hunt declares `issues: write` (its red-hunt reporter needs it on schedule runs),
+  # and a caller's grant is the ceiling: the callee can only request a subset, so a caller that
+  # omits this line fails the whole workflow at parse time with "only allowed 'issues: none"' —
+  # including for the steps that never run here. The gate's reporter steps are schedule-only and
+  # never fire on a release; this grant exists so the file parses, nothing else.
+  issues: write
 
 jobs:
   # No race reaches a published artifact: the tag's own commit is hunted before anything is

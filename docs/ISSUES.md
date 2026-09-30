@@ -301,3 +301,22 @@ let the subject act on a world that is already set. The shape of the fix is alwa
 move setup from *faster than* to *before*. This is the establishing-side twin of lesson 4 —
 that one governs claims about state the run changes, this one governs the state the run
 is handed.
+
+### 7. A workflow the release calls is parsed under the release's permissions
+
+**What happened.** The red-hunt reporter added `issues: write` to `flake.yml`, whose steps
+only ever fire on `schedule` events. The release workflow calls that same file through
+`workflow_call`, and its permission block only granted `contents: write` — so the v1.7.9 tag
+push died at startup, before any job: GitHub validates a called workflow's `permissions`
+against what the caller grants, and an undeclared permission reads as `none`. The failure was
+"the workflow is requesting 'issues: write', but is only allowed 'issues: none'" — raised for
+steps that would never run in that call, because the *file* is parsed, not the execution.
+
+**The rule.** A `workflow_call` contract is declared surface, not just executed steps: the
+caller must grant everything any of the callee's event paths might request, because the
+caller's grant is the ceiling — the callee can ask for a subset, never a superset. When you
+give a shared workflow a new permission for one trigger, grep for its callers the same commit:
+whoever calls this file must grant it too, or their next tag fails at parse time with no job,
+no log and no annotation in the API. And the release path needs one full dress rehearsal per
+change to `workflow_call` wiring — CI cannot catch this class, because CI never calls the
+callee; the parse error only exists on the event that does.
