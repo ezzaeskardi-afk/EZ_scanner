@@ -49,6 +49,7 @@
     "bump": "node scripts/bump-version.ts",
     "preflight": "node scripts/preflight.ts",
     "hunt-receipt": "node scripts/hunt-receipt.ts",
+    "heavy-receipt": "node scripts/heavy-receipt.ts",
     "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
