@@ -65,7 +65,7 @@ permissions:
 jobs:
   hunt:
     name: integration suite, repeated under load
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Three passes, with two busy processes on a 4-vCPU runner: enough taken away to expose the
     # races this exists for, and still inside the timeout with room for a slow pass. The script's
     # own default is hard (one busy process per CPU but one), which is right on a developer's
