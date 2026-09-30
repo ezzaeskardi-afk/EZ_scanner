@@ -30,6 +30,8 @@ import {
   rewriteLink,
   sniRiskWarnings,
 } from '../src/core/configparse.ts';
+import { DEFAULT_CONFIG, type ScanConfig } from '../src/core/types.ts';
+import { normalizeSni, sanitizeConfig } from '../src/core/validate.ts';
 import {
   bigToIpv6,
   cidrInfo,
@@ -45,6 +47,8 @@ import {
 import {
   ADVERSARIAL,
   garbageString,
+  intBetween,
+  junkConfigPatch,
   junkJson,
   randomCidr,
   schemeGarbage,
@@ -78,6 +82,92 @@ function assertRealPort(port: number, where: string): void {
   assert.ok(Number.isInteger(port), `${where}: port must be an integer, got ${String(port)}`);
   assert.ok(port >= 1 && port <= 65535, `${where}: port must be 1..65535, got ${String(port)}`);
 }
+
+/** A warning the sanitizer emitted is a string; anything else would print wrong downstream. */
+function assertWarningsAreStrings(warnings: readonly unknown[], where: string): void {
+  for (const warning of warnings) {
+    assert.equal(typeof warning, 'string', `${where}: every warning is a string, got ${String(warning)}`);
+  }
+}
+
+/**
+ * The whole safety net holds at once: the patch the sanitizer returns is a usable ScanConfig
+ * (every integer field whole and in its own legal range, every boolean a boolean, every string
+ * a string) and nothing threw to get there.
+ */
+test('property: sanitizeConfig answers every hostile GUI patch with a usable config', () => {
+  const rand = seededFuzz(BASE_SEED + 2);
+  const patches: Array<Record<string, unknown>> = [{}, ...ADVERSARIAL.map((text) => ({ mode: text, sni: text, speedUrl: text })), ...Array.from({ length: ITERATIONS }, () => junkConfigPatch(rand))];
+  for (const patch of patches) {
+    let result: ReturnType<typeof sanitizeConfig> | undefined;
+    assert.doesNotThrow(() => {
+      result = sanitizeConfig(patch as Partial<ScanConfig>, DEFAULT_CONFIG);
+    }, `patch: ${JSON.stringify(slice(JSON.stringify(patch)))}`);
+    if (!result) assert.fail('unreachable');
+    const { config, warnings } = result;
+    assertWarningsAreStrings(warnings, `patch: ${JSON.stringify(slice(JSON.stringify(patch)))}`);
+    assertRealPort(config.port, `patch: ${JSON.stringify(slice(JSON.stringify(patch)))}`);
+    assertRealPort(config.canaryPort, `patch: ${JSON.stringify(slice(JSON.stringify(patch)))}`);
+    for (const [name, value] of Object.entries({
+      tries: config.tries, minSuccesses: config.minSuccesses, timeoutMs: config.timeoutMs, workers: config.workers,
+      maxLatencyMs: config.maxLatencyMs, maxLossPct: config.maxLossPct, stabilityMs: config.stabilityMs,
+      speedBytes: config.speedBytes, topN: config.topN, minDelayMs: config.minDelayMs, canaryPort: config.canaryPort,
+      minScore: config.minScore, rateLimitPerSec: config.rateLimitPerSec,
+    })) {
+      assert.ok(Number.isInteger(value), `${name}=${String(value)} must be an integer (patch: ${JSON.stringify(slice(JSON.stringify(patch)))})`);
+    }
+    assert.ok(config.tries >= 1 && config.tries <= 10, `tries=${config.tries} is 1..10`);
+    assert.ok(config.minSuccesses >= 1 && config.minSuccesses <= config.tries, `minSuccesses=${config.minSuccesses} respects tries=${config.tries}`);
+    assert.ok(config.timeoutMs >= 500 && config.timeoutMs <= 30_000, `timeoutMs=${config.timeoutMs} is 500..30000`);
+    assert.ok(config.workers >= 1 && config.workers <= 1000, `workers=${config.workers} is 1..1000`);
+    assert.ok(config.maxLossPct >= 0 && config.maxLossPct <= 100, `maxLossPct=${config.maxLossPct} is 0..100`);
+    for (const [name, value] of Object.entries({ requireHttp: config.requireHttp, requireWs: config.requireWs, earlyExit: config.earlyExit, measureSpeed: config.measureSpeed, recoveryPass: config.recoveryPass })) {
+      assert.equal(typeof value, 'boolean', `${name}=${String(value)} must be a boolean (patch: ${JSON.stringify(slice(JSON.stringify(patch)))})`);
+    }
+    for (const [name, value] of Object.entries({ sni: config.sni, httpPath: config.httpPath, wsPath: config.wsPath, canaryHost: config.canaryHost, speedUrl: config.speedUrl, uploadUrl: config.uploadUrl })) {
+      assert.equal(typeof value, 'string', `${name}=${String(value)} must be a string (patch: ${JSON.stringify(slice(JSON.stringify(patch)))})`);
+    }
+    assert.ok(config.httpPath.startsWith('/'), `httpPath=${config.httpPath} starts with /`);
+    assert.ok(config.wsPath.startsWith('/'), `wsPath=${config.wsPath} starts with /`);
+    if (config.speedUrl) assert.ok(config.speedUrl.startsWith('http://') || config.speedUrl.startsWith('https://'), `speedUrl=${config.speedUrl} is http(s)`);
+    if (config.uploadUrl) assert.ok(config.uploadUrl.startsWith('http://') || config.uploadUrl.startsWith('https://'), `uploadUrl=${config.uploadUrl} is http(s)`);
+    assert.ok(config.sniPool.length <= 20, `sniPool has at most 20 members, got ${config.sniPool.length}`);
+    assert.ok(config.sniPool.every((sni) => typeof sni === 'string' && sni.length > 0), 'every sniPool member is a non-empty string');
+    assert.ok(['tcp', 'tls', 'http'].includes(config.mode), `mode=${config.mode} is a real probe mode`);
+    assert.ok([0, 4, 6].includes(config.family), `family=${config.family} is 0, 4 or 6`);
+  }
+});
+
+test('property: sanitizeConfig accepts good values unchanged — the fuzz must not have broken the front door', () => {
+  const rand = seededFuzz(BASE_SEED + 3);
+  for (let i = 0; i < ITERATIONS; i += 1) {
+    // workers stays under the burst-profile threshold: above 150 with no rate limit the
+    // sanitizer *means* to warn — that advisory is intended behavior, not a sanitize failure.
+    const want = { workers: intBetween(rand, 1, 150), timeoutMs: intBetween(rand, 500, 30_000), port: intBetween(rand, 1, 65535), sni: `edge${intBetween(rand, 0, 9999)}.example.com` };
+    const { config, warnings } = sanitizeConfig(want as Partial<ScanConfig>, DEFAULT_CONFIG);
+    assert.deepEqual({ workers: config.workers, timeoutMs: config.timeoutMs, port: config.port, sni: config.sni }, want, 'legal values pass through exactly');
+    assert.deepEqual(warnings, []);
+  }
+});
+
+test('property: normalizeSni answers every string with a host-shaped lowercase answer', () => {
+  const rand = seededFuzz(BASE_SEED + 4);
+  const inputs = [...ADVERSARIAL, ...Array.from({ length: ITERATIONS }, () => garbageString(rand)), ...Array.from({ length: ITERATIONS }, () => schemeGarbage(rand))];
+  for (const input of inputs) {
+    let out: string | undefined;
+    assert.doesNotThrow(() => {
+      out = normalizeSni(input);
+    }, `input: ${JSON.stringify(slice(input))}`);
+    assert.equal(typeof out, 'string');
+    assert.equal(out, (out as string).toLowerCase(), `sni stays lowercase: ${JSON.stringify(out)}`);
+    assert.ok(!out.includes('/'), `sni carries no path: ${JSON.stringify(out)}`);
+    assert.ok(!/^\./.test(out as string) && !/\.$/.test(out as string), `sni neither starts nor ends on a dot: ${JSON.stringify(out)}`);
+    assert.ok(!out.includes('://'), `sni carries no scheme: ${JSON.stringify(out)}`);
+    // `vless:` survives the stripper because it never carried `//` — a host-shaped leftover,
+    // not a port. The real invariant: no `host:port` pair rides on.
+    assert.ok(!/:[0-9]+$/.test(out as string), `sni carries no port: ${JSON.stringify(out)}`);
+  }
+});
 
 test('property: parseShareLink answers every string with a result or a reason', () => {
   for (const { label, make } of CORPORA) {

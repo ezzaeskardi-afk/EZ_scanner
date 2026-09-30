@@ -97,6 +97,33 @@ export function randomCidr(rand: Rand): string {
     : `${randomIpv6(rand)}/${intBetween(rand, 0, 128)}`;
 }
 
+/**
+ * A plausible ScanConfig patch from hostile hands: right keys, wrong universes. The GUI's
+ * config endpoint is this generator's real-world reader (`sanitizeConfig(body.config)`),
+ * so the shapes cover what JSON POSTing can actually produce — wrong types, wrong ranges,
+ * strings that look like numbers, huge magnitudes, NaN/Infinity serialized as null —
+ * sprinkled with a few right values so the sanitizer is not only ever refusing.
+ */
+export function junkConfigPatch(rand: Rand): Record<string, unknown> {
+  const NUMERIC_FIELDS = ['port', 'tries', 'minSuccesses', 'timeoutMs', 'workers', 'maxLatencyMs', 'maxLossPct', 'stabilityMs', 'speedBytes', 'topN', 'minDelayMs', 'canaryPort', 'minScore', 'rateLimitPerSec'] as const;
+  const BOOL_FIELDS = ['requireHttp', 'requireWs', 'earlyExit', 'measureSpeed', 'recoveryPass', 'adaptiveBackoff'] as const;
+  const STRING_FIELDS = ['sni', 'httpPath', 'wsPath', 'canaryHost', 'speedUrl', 'uploadUrl', 'speedSni'] as const;
+  const junkString = (): string => pick(rand, ['', ' ', '999999999999999999999', '-1', '0x1f', 'NaN', 'true', '1e999', 'é', '/path', 'not a url', 'https://', 'javascript:alert(1)', '1.2.3.4:99999', ' null ']);
+  const junkNumber = (): unknown => pick<unknown>(rand, [intBetween(rand, -50, 70_000), 1e999, NaN, 0, -1, 1.5, '443', 'abc', true, null]);
+  const out: Record<string, unknown> = {};
+  const fields = [...NUMERIC_FIELDS, ...BOOL_FIELDS, ...STRING_FIELDS, 'mode', 'family', 'sniPool'];
+  for (const field of fields) {
+    if (rand() >= 0.35) continue;
+    if ((NUMERIC_FIELDS as readonly string[]).includes(field)) out[field] = junkNumber();
+    else if ((BOOL_FIELDS as readonly string[]).includes(field)) out[field] = pick<unknown>(rand, [true, false, 'true', 'false', '1', '0', 'on', 'off', 'maybe', 0, 1, null]);
+    else if (field === 'sniPool') out[field] = rand() < 0.5 ? Array.from({ length: intBetween(rand, 0, 30) }, () => junkString()) : pick<unknown>(rand, [null, 'not-an-array', 42]);
+    else if (field === 'family') out[field] = pick<unknown>(rand, [0, 4, 6, '4', 2, -1, 'six', null]);
+    else if (field === 'mode') out[field] = pick<unknown>(rand, ['tcp', 'tls', 'http', 'TLS', 'udp', '', 42, null]);
+    else out[field] = rand() < 0.7 ? junkString() : garbageString(rand);
+  }
+  return out;
+}
+
 /** Hand-picked members: the shapes that broke these parsers before, plus classic mangling. */
 export const ADVERSARIAL: readonly string[] = [
   '',
