@@ -438,7 +438,10 @@ goes red is not left to the logs either: the workflow opens a **Flake hunt went 
 the hunt's own per-pass table and verdict plus the run and artifact links, every later red hunt
 comments on the same thread, and the first green hunt closes it — one thread per red period,
 found by title, no state stored. Manual dispatches and the release gate stay silent (a dispatcher
-is watching; a red gate already blocks the release). And a race must not reach a published artifact, so every release waits
+is watching; a red gate already blocks the release). The week's hunts add up to one page too:
+`npm run hunt-receipt` reads the trailing 7 days of scheduled hunts and prints the ledger —
+greens as a table of passes and commits, every red with its verdict table, artifact link and
+issue thread — so "what did the net see this week?" is one command, not seven log readings. And a race must not reach a published artifact, so every release waits
 on this hunt: the release workflow calls it on the tag's own commit — six passes, three busy
 CPUs — and publishes nothing until it is green.
 

@@ -48,6 +48,7 @@
     "notes": "node scripts/release-notes.ts",
     "bump": "node scripts/bump-version.ts",
     "preflight": "node scripts/preflight.ts",
+    "hunt-receipt": "node scripts/hunt-receipt.ts",
     "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
