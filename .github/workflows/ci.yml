@@ -7,6 +7,22 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The fast lane: two greps, seconds long, before the matrix spends minutes. Same contracts
+  # test/workflow-contracts.test.ts pins — the grep is the fail-fast twin, so a regression is
+  # named in the first seconds of the run instead of after the suite. A raw `ubuntu-latest`
+  # and any action ref below v5 (those are on the node 20 runtime, deprecated).
+  # NOTE: keep in sync with the gate's tests — this is the early warning, not the contract.
+  workflow_contracts:
+    name: workflow contracts (fast grep)
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: runner labels and action refs
+        run: |
+          ! grep -rn "ubuntu-latest" .github/workflows/
+          if grep -rhoE "uses: actions/[a-z-]+@v[0-4]" .github/workflows/ | sort -u; then
+            echo "::error::pre-v5 action refs found (node 20 runtime)"; exit 1
+          fi
   check:
     name: typecheck + tests (node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
