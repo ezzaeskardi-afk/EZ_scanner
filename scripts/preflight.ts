@@ -22,10 +22,31 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { STUB_MARKER, VERSION_PLACES, parseTarget } from './bump-version.ts';
+import { STUB_MARKER, VERSION_PLACES } from './bump-version.ts';
 import { releaseNotes } from './release-notes.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const SEMVER = /^\d+\.\d+\.\d+$/;
+
+/**
+ * Preflight's own version rule. Unlike the bump, preflight runs AFTER it: the tree's version
+ * is already the target, so equal is the expected case here — parseTarget's strictly-greater
+ * rule is the bump's. A keyword is refused (there is nothing left to compute: the tree carries
+ * the answer), a `v` prefix is tolerated, and only a version BEHIND the tree is rejected.
+ */
+export function resolvePreflightVersion(pkgVersion: string, arg: string): string {
+  if (/^(major|minor|patch)$/.test(arg)) {
+    throw new Error(`resolve the keyword yourself: the tree already carries the bumped version (${pkgVersion}); run preflight with ${pkgVersion}`);
+  }
+  const version = arg.replace(/^v/, '');
+  if (!SEMVER.test(version)) throw new Error(`not a semver version: "${arg}"`);
+  const [maj, min, pat] = version.split('.').map(Number);
+  const [cmaj, cmin, cpat] = pkgVersion.split('.').map(Number);
+  if (maj < cmaj || (maj === cmaj && min < cmin) || (maj === cmaj && min === cmin && pat < cpat)) {
+    throw new Error(`${version} is behind the tree's version ${pkgVersion} — nothing to tag`);
+  }
+  return version;
+}
 
 /** One checklist row: what was asked, whether it held, and the detail that names the fix. */
 export interface Check {
@@ -142,7 +163,7 @@ if (process.argv[1]?.endsWith('preflight.ts')) {
   }
   try {
     const pkgVersion = (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { version: string }).version;
-    const version = parseTarget(pkgVersion, arg);
+    const version = resolvePreflightVersion(pkgVersion, arg);
     const checks = runPreflight(version, {
       git: defaultGit,
       read: (file) => readFileSync(join(root, file), 'utf8'),

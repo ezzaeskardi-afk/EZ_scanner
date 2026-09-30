@@ -17,6 +17,7 @@ import {
   literalOf,
   notesCheck,
   report,
+  resolvePreflightVersion,
   runPreflight,
   tagCheck,
   versionAgreement,
@@ -118,10 +119,13 @@ test('the same path is all green on a ready tree', () => {
   assert.equal([...text.matchAll(/✅/g)].length, 4, text);
 });
 
-test('keyword and v-prefixed arguments resolve through the bump\'s own parseTarget', () => {
-  // The CLI resolves its argument with the bump's parseTarget before any check runs, so
-  // `patch`, `1.8.0` and `v1.8.0` agree there too — one resolver for both tools.
-  assert.equal(parseTarget('1.8.0', 'patch'), '1.8.1');
-  assert.equal(parseTarget('1.8.0', 'v1.9.0'), '1.9.0');
-  assert.throws(() => parseTarget('1.8.0', '1.7.9'), /does not come after/, 'preflight refuses a version already behind the tree');
+test('preflight runs after the bump, so equal passes and only behind is refused', () => {
+  // The bump's parseTarget insists on strictly-greater; preflight's own rule knows the tree
+  // already carries the version, so equal is the expected case and keywords have no meaning.
+  assert.equal(resolvePreflightVersion('1.8.0', '1.8.0'), '1.8.0', 'equal is the normal post-bump case');
+  assert.equal(resolvePreflightVersion('1.8.0', 'v1.8.0'), '1.8.0', 'the v prefix is tolerated');
+  assert.equal(resolvePreflightVersion('1.8.0', '1.8.1'), '1.8.1', 'ahead of the tree is allowed (notes may be written first)');
+  assert.throws(() => resolvePreflightVersion('1.8.0', '1.7.9'), /behind the tree/);
+  assert.throws(() => resolvePreflightVersion('1.8.0', 'patch'), /resolve the keyword yourself/);
+  assert.throws(() => resolvePreflightVersion('1.8.0', '1.8'), /not a semver/);
 });
