@@ -87,7 +87,11 @@ export function bumpPlace(contents: string, place: { file: string; pattern: RegE
 /**
  * The placeholder section the notes gate (test/release-notes.test.ts) requires for a new
  * version: prose above the fold, long enough to pass, honest that it is not the real note.
+ * STUB_MARKER is the machine-readable tell: preflight refuses to pass a tag over a section
+ * carrying it, so "forgot to write the note" stops at the pre-tag check, not the release.
  */
+export const STUB_MARKER = 'Preflight refuses to pass a tag over this placeholder.';
+
 export function changelogStub(version: string, date: string): string {
   return [
     `## ${version} — ${date}`,
@@ -95,6 +99,8 @@ export function changelogStub(version: string, date: string): string {
     'Cut with `npm run bump`. What follows is a placeholder: replace it with what actually changed',
     'before pushing the tag — the release workflow publishes this section as written, and',
     '`npm run notes -- <version>` prints exactly what a release would say.',
+    '',
+    STUB_MARKER,
     '',
   ].join('\n');
 }
@@ -183,7 +189,7 @@ if (process.argv[1]?.endsWith('bump-version.ts')) {
     if (!commit.ok) throw new Error(`git commit failed: ${commit.output}`);
     console.log(`  committed ${git(['rev-parse', '--short', 'HEAD']).output} — chore: EZ Scanner ${version}`);
     console.log(
-      `next: write the real ${version} entry in CHANGELOG.md (the release publishes it), then push and tag v${version}`,
+      `next: write the real ${version} entry in CHANGELOG.md (the release publishes it), then npm run preflight -- ${version} and push the tag`,
     );
   } catch (err) {
     console.error((err as Error).message);

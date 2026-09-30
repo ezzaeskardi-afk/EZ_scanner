@@ -47,6 +47,7 @@
     "prune:openui": "node scripts/prune-openui-css.ts",
     "notes": "node scripts/release-notes.ts",
     "bump": "node scripts/bump-version.ts",
+    "preflight": "node scripts/preflight.ts",
     "check": "npm run typecheck && npm test"
   },
   "devDependencies": {

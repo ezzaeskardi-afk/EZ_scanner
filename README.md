@@ -463,7 +463,12 @@ the typecheck, the two gates and the test suite, packages the tracked files as
 attaches all three. The four-place version bump — package.json, the CLI banner, the GUI server
 and the OpenUI report default — is one command too: `npm run bump -- <version | patch | minor | major>`
 rewrites all four, opens the CHANGELOG section the notes gate requires, runs the version gate and
-lands the whole thing in a single commit (`--dry-run` previews it without writing). The same notes
+lands the whole thing in a single commit (`--dry-run` previews it without writing). Before the
+tag, one command checks the whole readiness list at once — `npm run preflight -- <version>`:
+the four version literals agree, the changelog carries a real note (the bump's placeholder is
+recognized by its machine marker and refused), the working tree is clean, and no tag for the
+version exists yet — so the broken-release shapes the 1.7.9 tag push found are caught at
+the pre-tag check instead. The same notes
 are one command locally (`npm run notes -- 1.7.7`), so what a release says is what the
 changelog says. Re-publishing an existing tag keeps its published body when it differs from the
 tag's own extraction — a difference is a hand-correction made after shipping, and the tag is

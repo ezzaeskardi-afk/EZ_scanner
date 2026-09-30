@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { bumpPlace, changelogStub, nextVersion, parseTarget, prependChangelog, VERSION_PLACES } from '../scripts/bump-version.ts';
+import { bumpPlace, changelogStub, nextVersion, parseTarget, prependChangelog, STUB_MARKER, VERSION_PLACES } from '../scripts/bump-version.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel: string): string => readFileSync(join(root, rel), 'utf8');
@@ -89,4 +89,11 @@ test('the changelog stub lands above the current top section', () => {
   const bumped = prependChangelog(changelog, changelogStub('9.9.9', '2030-01-01'));
   assert.ok(bumped.indexOf('## 9.9.9 — 2030-01-01') > -1, 'the stub section is present');
   assert.ok(bumped.indexOf('## 9.9.9') < bumped.indexOf(`## ${top}`), 'newest first, like every entry so far');
+});
+
+test('the stub carries the machine marker preflight refuses a tag over', () => {
+  // The bump and preflight agree on this one string: it is how "forgot to write the note"
+  // is told apart from a short but real note, without either tool parsing the other.
+  assert.ok(changelogStub('9.9.9', '2030-01-01').includes(STUB_MARKER), 'the stub must carry the marker');
+  assert.ok(!read('CHANGELOG.md').includes(STUB_MARKER), 'the shipped changelog must not carry it');
 });
