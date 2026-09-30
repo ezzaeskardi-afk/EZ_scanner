@@ -109,42 +109,48 @@ function withRetry(gh: Gh, args: string[]): { ok: boolean; output: string } {
   return first.ok ? first : gh(args);
 }
 
+/**
+ * Finds the newest heavy hunt, downloads its artifact and parses the receipt. Shared by the
+ * receipt's own CLI and by `npm run record`, which writes the A/B row into the README.
+ */
+export async function latestHeavyReceipt(gh: Gh): Promise<{ hunt: HeavyHunt; receipt: Receipt }> {
+  const runs = withRetry(gh, ['api', `repos/${OWNER}/${REPO}/actions/runs?event=schedule&per_page=40`, '--jq', '.workflow_runs']);
+  if (!runs.ok) throw new Error(`gh could not list runs: ${runs.output}`);
+  const hunts = (JSON.parse(runs.output) as Array<Record<string, unknown>>)
+    .map((run) => ({
+      id: run.id as number,
+      createdAt: run.created_at as string,
+      updatedAt: run.updated_at as string,
+      conclusion: (run.conclusion as string) ?? '',
+      headSha: (run.head_sha as string) ?? '',
+    }));
+  const heavy = hunts.filter(isHeavy).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  if (!heavy) throw new Error('no heavy hunt in the recent scheduled runs — has Sunday come yet?');
+
+  const download = withRetry(gh, ['api', `repos/${OWNER}/${REPO}/actions/runs/${heavy.id}/artifacts`, '--jq', '.artifacts[0].name']);
+  const name = download.ok ? download.output : '';
+  if (!name) throw new Error(`no artifact on run ${heavy.id}`);
+  const tmp = spawnSync(process.execPath, ['-e', `
+    const { mkdtempSync } = require('node:fs');
+    process.stdout.write(mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'heavy-')));
+  `], { encoding: 'utf8' });
+  const dir = tmp.stdout.trim();
+  const got = withRetry(gh, ['run', 'download', String(heavy.id), '-n', name, '-D', dir]);
+  if (!got.ok) throw new Error(`gh could not download ${name}: ${got.output}`);
+  const body = spawnSync(process.execPath, ['-e', `
+    const fs = require('node:fs');
+    const file = fs.readdirSync(process.argv[1]).find((f) => f.endsWith('.json'));
+    process.stdout.write(fs.readFileSync(require('node:path').join(process.argv[1], file), 'utf8'));
+  `, dir], { encoding: 'utf8' });
+  if (!body.stdout) throw new Error(`artifact ${name} carried no readable JSON: ${body.stderr}`);
+  return { hunt: heavy, receipt: parseResults(body.stdout) };
+}
+
 if (process.argv[1]?.endsWith('heavy-receipt.ts')) {
   try {
-    const runs = withRetry(defaultGh, ['api', `repos/${OWNER}/${REPO}/actions/runs?event=schedule&per_page=40`, '--jq', '.workflow_runs']);
-    if (!runs.ok) throw new Error(`gh could not list runs: ${runs.output}`);
-    const hunts = (JSON.parse(runs.output) as Array<Record<string, unknown>>)
-      .map((run) => ({
-        id: run.id as number,
-        createdAt: run.created_at as string,
-        updatedAt: run.updated_at as string,
-        conclusion: (run.conclusion as string) ?? '',
-        headSha: (run.head_sha as string) ?? '',
-      }));
-    const heavy = hunts.filter(isHeavy).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-    if (!heavy) throw new Error('no heavy hunt in the recent scheduled runs — has Sunday come yet?');
-
-    const download = withRetry(defaultGh, ['api', `repos/${OWNER}/${REPO}/actions/runs/${heavy.id}/artifacts`, '--jq', '.artifacts[0].name']);
-    const name = download.ok ? download.output : '';
-    if (!name) throw new Error(`no artifact on run ${heavy.id}`);
-    const tmp = spawnSync(process.execPath, ['-e', `
-      const { mkdtempSync } = require('node:fs');
-      process.stdout.write(mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'heavy-')));
-    `], { encoding: 'utf8' });
-    const dir = tmp.stdout.trim();
-    const got = withRetry(defaultGh, ['run', 'download', String(heavy.id), '-n', name, '-D', dir]);
-    if (!got.ok) throw new Error(`gh could not download ${name}: ${got.output}`);
-    const body = spawnSync(process.execPath, ['-e', `
-      const fs = require('node:fs');
-      const dir = process.argv[1];
-      const file = fs.readdirSync(dir).find((f) => f.endsWith('.json'));
-      process.stdout.write(fs.readFileSync(require('node:path').join(dir, file), 'utf8'));
-    `, dir], { encoding: 'utf8' });
-    if (!body.stdout) throw new Error(`artifact ${name} carried no readable JSON: ${body.stderr}`);
-
-    console.log(renderReceipt(heavy, parseResults(body.stdout)));
-    const green = heavy.conclusion === 'success' && !parseResults(body.stdout).timedOut;
-    if (!green) {
+    const { hunt, receipt } = await latestHeavyReceipt(defaultGh);
+    console.log(renderReceipt(hunt, receipt));
+    if (hunt.conclusion !== 'success' || receipt.timedOut) {
       console.error('the heavy hunt is RED — this receipt is the triage sheet');
       process.exit(1);
     }

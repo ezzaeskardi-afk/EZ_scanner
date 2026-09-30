@@ -50,6 +50,7 @@
     "preflight": "node scripts/preflight.ts",
     "hunt-receipt": "node scripts/hunt-receipt.ts",
     "heavy-receipt": "node scripts/heavy-receipt.ts",
+    "record": "node scripts/record.ts",
     "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
