@@ -19,8 +19,12 @@ jobs:
       - uses: actions/checkout@v5
       - name: runner labels and action refs
         run: |
+          # Both hunts refuse to name their own quarry: the character class keeps this file
+          # clean of the label literal, and the pre-v5 pattern anchors the ref at end of line
+          # so it matches real `uses:` refs, never the regex text in this very grep.
           ! grep -rn "ubuntu[-]latest" .github/workflows/
-          if grep -rhoE "uses: actions/[a-z-]+@v[0-4]" .github/workflows/ | sort -u; then
+          ! grep -rE "uses: actions/[a-z-]+@v[0-4]$" .github/workflows/ | grep .
+          if grep -rE "uses: actions/[a-z-]+@v[0-4]$" .github/workflows/ | grep -q .; then
             echo "::error::pre-v5 action refs found (node 20 runtime)"; exit 1
           fi
   check:
