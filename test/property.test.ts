@@ -30,8 +30,8 @@ import {
   rewriteLink,
   sniRiskWarnings,
 } from '../src/core/configparse.ts';
-import { DEFAULT_CONFIG, type ScanConfig } from '../src/core/types.ts';
-import { normalizeSni, sanitizeConfig } from '../src/core/validate.ts';
+import { DEFAULT_CONFIG, type ScanConfig, type SourceSpec } from '../src/core/types.ts';
+import { normalizeSni, sanitizeConfig, sanitizeSource } from '../src/core/validate.ts';
 import {
   bigToIpv6,
   cidrInfo,
@@ -50,6 +50,7 @@ import {
   intBetween,
   junkConfigPatch,
   junkJson,
+  junkSourcePatch,
   randomCidr,
   schemeGarbage,
   seededFuzz,
@@ -147,6 +148,40 @@ test('property: sanitizeConfig accepts good values unchanged — the fuzz must n
     const { config, warnings } = sanitizeConfig(want as Partial<ScanConfig>, DEFAULT_CONFIG);
     assert.deepEqual({ workers: config.workers, timeoutMs: config.timeoutMs, port: config.port, sni: config.sni }, want, 'legal values pass through exactly');
     assert.deepEqual(warnings, []);
+  }
+});
+
+test('property: sanitizeSource answers every hostile source patch with a usable SourceSpec', () => {
+  const rand = seededFuzz(BASE_SEED + 5);
+  const patches: Array<Record<string, unknown>> = [{}, ...ADVERSARIAL.map((text) => ({ kind: text, text, path: text })), ...Array.from({ length: ITERATIONS }, () => junkSourcePatch(rand))];
+  for (const patch of patches) {
+    let result: ReturnType<typeof sanitizeSource> | undefined;
+    assert.doesNotThrow(() => {
+      result = sanitizeSource(patch as Partial<SourceSpec>, { kind: 'cloudflare' });
+    }, `patch: ${JSON.stringify(slice(JSON.stringify(patch)))}`);
+    if (!result) assert.fail('unreachable');
+    assert.ok(['cloudflare', 'paste', 'file', 'domains', 'config'].includes(result.kind), `kind=${String(result.kind)} is a real source kind (patch: ${JSON.stringify(slice(JSON.stringify(patch)))})`);
+    for (const [name, value] of Object.entries({ text: result.text, path: result.path, config: result.config })) {
+      assert.ok(value === undefined || typeof value === 'string', `${name}=${String(value)} must be a string or undefined (patch: ${JSON.stringify(slice(JSON.stringify(patch)))})`);
+    }
+    // Optional fields keep base's undefined when the patch omits them; when the patch DOES
+    // supply them, the sanitizer's clamps hold. Both halves are asserted per-field.
+    if (result.extended !== undefined) assert.equal(typeof result.extended, 'boolean', `extended=${String(result.extended)} must be a boolean when set`);
+    if (result.limit !== undefined) assert.ok(Number.isInteger(result.limit) && result.limit >= 0 && result.limit <= 2_000_000, `limit=${String(result.limit)} is a whole 0..2M (patch: ${JSON.stringify(slice(JSON.stringify(patch)))})`);
+    if (result.seed !== undefined) assert.ok(Number.isInteger(result.seed) && result.seed >= 0 && result.seed <= 2 ** 31 - 1, `seed=${String(result.seed)} is a whole 0..2^31-1`);
+  }
+});
+
+test('property: a legal source patch passes through exactly — the other half of the front door stays open', () => {
+  const rand = seededFuzz(BASE_SEED + 6);
+  for (let i = 0; i < ITERATIONS; i += 1) {
+    const want = { kind: 'paste' as const, text: `vless://u@host${intBetween(rand, 0, 999)}.example:8443?type=ws`, limit: intBetween(rand, 1, 2_000_000), seed: intBetween(rand, 0, 2 ** 31 - 1), extended: rand() < 0.5 };
+    const out = sanitizeSource(want as Partial<SourceSpec>, { kind: 'cloudflare' });
+    // Field-wise equality: the sanitizer's output object legitimately carries extra
+    // undefined-valued keys, so a whole-object deepEqual would be strict about nothing.
+    for (const key of Object.keys(want) as Array<keyof typeof want>) {
+      assert.deepEqual(out[key], want[key], `${key} survives whole`);
+    }
   }
 });
 

@@ -124,6 +124,24 @@ export function junkConfigPatch(rand: Rand): Record<string, unknown> {
   return out;
 }
 
+/**
+ * The same for the source-spec half of the GUI form: right keys, wrong universes. `kind`
+ * takes values outside its union, `limit`/`seed` take the junk numbers, `extended` takes
+ * the junk booleans, and the free-text fields take hostile pastes — the shapes a tampered
+ * request body (or a broken GUI) can actually send to `sanitizeSource`.
+ */
+export function junkSourcePatch(rand: Rand): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const field of ['kind', 'text', 'path', 'config', 'extended', 'limit', 'seed']) {
+    if (rand() >= 0.4) continue;
+    if (field === 'kind') out[field] = pick<unknown>(rand, ['cloudflare', 'paste', 'file', 'domains', 'config', 'PASTE', 'cloud', '', 42, null, ['paste']]);
+    else if (field === 'extended') out[field] = pick<unknown>(rand, [true, false, 'true', 'false', '1', '0', 'yes', 0, 1, null]);
+    else if (field === 'limit' || field === 'seed') out[field] = pick<unknown>(rand, [intBetween(rand, -100, 3_000_000), 1e999, NaN, 0, 1.5, '5000', 'abc', true, null]);
+    else out[field] = rand() < 0.7 ? pick<unknown>(rand, [garbageString(rand), 'x'.repeat(intBetween(rand, 1, 500)), '/etc/passwd', '\\..\\..\\secrets', 'vless://u@h:1', '{"outbounds":null}']) : null;
+  }
+  return out;
+}
+
 /** Hand-picked members: the shapes that broke these parsers before, plus classic mangling. */
 export const ADVERSARIAL: readonly string[] = [
   '',
