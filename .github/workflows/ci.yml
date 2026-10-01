@@ -6,6 +6,7 @@ on:
   pull_request:
   workflow_dispatch:
 
+jobs:
   # The fast lane: two greps, seconds long, before the matrix spends minutes. Same contracts
   # test/workflow-contracts.test.ts pins — the grep is the fail-fast twin, so a regression is
   # named in the first seconds of the run instead of after the suite. The hunted label and
