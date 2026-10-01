@@ -23,12 +23,13 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** package.json plus the three src literals, in the same shape the version gate reads them. */
+/** package.json plus the three src literals plus the README's release badge, in the same shape the version gate reads them. */
 export const VERSION_PLACES: Array<{ file: string; pattern: RegExp }> = [
   { file: 'package.json', pattern: /"version": "(\d+\.\d+\.\d+)"/g },
   { file: 'src/cli/main.ts', pattern: /const VERSION = '(\d+\.\d+\.\d+)'/g },
   { file: 'src/server/server.ts', pattern: /const VERSION = '(\d+\.\d+\.\d+)'/g },
   { file: 'src/core/openui.ts', pattern: /input\.version \?\? '(\d+\.\d+\.\d+)'/g },
+  { file: 'README.md', pattern: /badge\/release-(\d+\.\d+\.\d+)-blue/g },
 ];
 
 /** The files one bump writes; the commit stages exactly these and nothing else. */

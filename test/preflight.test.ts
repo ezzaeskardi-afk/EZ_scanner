@@ -24,15 +24,16 @@ import {
   type GitRunner,
 } from '../scripts/preflight.ts';
 
-/** A fake `read` over the four version places, each literal overridable per test. */
-function fakeRead({ pkg = '1.8.0', cli = '1.8.0', server = '1.8.0', openui = '1.8.0', changelog }: {
-  pkg?: string; cli?: string; server?: string; openui?: string; changelog?: string;
+/** A fake `read` over the versioned places (incl. the README badge), each literal overridable per test. */
+function fakeRead({ pkg = '1.8.0', cli = '1.8.0', server = '1.8.0', openui = '1.8.0', badge = '1.8.0', changelog }: {
+  pkg?: string; cli?: string; server?: string; openui?: string; badge?: string; changelog?: string;
 } = {}) {
   const files = new Map<string, string>([
     ['package.json', JSON.stringify({ version: pkg })],
     ['src/cli/main.ts', `const VERSION = '${cli}';`],
     ['src/server/server.ts', `const VERSION = '${server}';`],
     ['src/core/openui.ts', `input.version ?? '${openui}'`],
+    ['README.md', `[![release](https://img.shields.io/badge/release-${badge}-blue)](#releases)`],
     ['CHANGELOG.md', changelog ?? '# Changelog\n\n## 1.8.0 — 2030-01-01\n\nA real note with more than enough substance to pass the thinness floor.\n'],
   ]);
   return (file: string) => {
@@ -51,11 +52,15 @@ function fakeGit(script: Partial<Record<'tag --list' | 'status --porcelain', { o
 test('version agreement reads every shared place and names the odd one out', () => {
   const ok = versionAgreement(fakeRead());
   assert.equal(ok.ok, true);
-  assert.match(ok.detail, /all 4 places say 1\.8\.0/);
+  assert.match(ok.detail, /all 5 places say 1\.8\.0/, 'the README badge is one of the counted places');
 
   const wrong = versionAgreement(fakeRead({ server: '1.7.8' }));
   assert.equal(wrong.ok, false);
   assert.match(wrong.detail, /src\/server\/server\.ts says 1\.7\.8/);
+
+  const staleBadge = versionAgreement(fakeRead({ badge: '1.7.8' }));
+  assert.equal(staleBadge.ok, false, 'a lagging README badge is a finding — the 1.7.8 audit found exactly this');
+  assert.match(staleBadge.detail, /README\.md says 1\.7\.8/);
 
   // A renamed constant leaves a pattern matching nothing — a finding, not a silent pass.
   const place = VERSION_PLACES.find((candidate) => candidate.file === 'src/cli/main.ts')!;

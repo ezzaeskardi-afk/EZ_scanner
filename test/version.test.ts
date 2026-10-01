@@ -34,23 +34,24 @@ test('package.json carries a plain semver version', () => {
   assert.match(pkg.version, SEMVER, `package.json version "${pkg.version}" is not semver`);
 });
 
-test('the shared literal table covers all four places', () => {
+test('the shared literal table covers every versioned place', () => {
   // The bump rewrites exactly this table, so a place dropped from it is a place the bump
   // silently stops touching — hence the file list itself is pinned, not just its length.
-  assert.equal(VERSION_PLACES.length, 4);
+  // The README badge joined: a lagging badge is exactly the stale claim the 1.7.8 audit found.
+  assert.equal(VERSION_PLACES.length, 5);
   assert.deepEqual(
     VERSION_PLACES.map((place) => place.file),
-    ['package.json', 'src/cli/main.ts', 'src/server/server.ts', 'src/core/openui.ts'],
+    ['package.json', 'src/cli/main.ts', 'src/server/server.ts', 'src/core/openui.ts', 'README.md'],
   );
 });
 
-test('every version literal in src/ agrees with package.json', () => {
+test('every version literal, including the README badge, agrees with package.json', () => {
   const found = VERSION_PLACES.filter((place) => place.file !== 'package.json').map((place) => ({
     file: place.file,
     version: literalsOf(place.file)[0] ?? '',
   }));
-  // Three literals read, so a renamed or deleted constant cannot make this pass silently.
-  assert.equal(found.length, 3);
+  // Four literals read, so a renamed or deleted constant cannot make this pass silently.
+  assert.equal(found.length, 4);
   for (const { file, version } of found) {
     assert.equal(version, pkg.version, `${file} says ${version}, package.json says ${pkg.version}`);
   }
